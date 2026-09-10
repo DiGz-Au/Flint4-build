@@ -1,1 +1,74 @@
-.github/workflows/build-flint4.yml
+name: Build Flint 4 Firmware
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build GL-BE14000 OpenWrt
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Maximize Build Space
+        uses: easimon/maximize-build-space@v10
+        with:
+          root-reserve-mb: 20480
+          swap-size-mb: 1024
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          remove-codeql: 'true'
+          remove-docker-images: 'true'
+
+      - name: Install Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang flex bison gawk \
+            gcc-multilib g++-multilib gettext git libncurses5-dev libssl-dev \
+            python3-distutils rsync unzip zlib1g-dev file wget device-tree-compiler
+
+      - name: Checkout Repository
+        run: |
+          git clone --depth 1 -b flint4-support https://github.com/JiaY-shi/openwrt.git openwrt
+
+      - name: Update and Install Feeds
+        run: |
+          cd openwrt
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: Generate Target Configuration
+        run: |
+          cd openwrt
+          cat << 'EOF' > .config
+          CONFIG_TARGET_mediatek=y
+          CONFIG_TARGET_mediatek_filogic=y
+          CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_glinet_gl-be14000=y
+          CONFIG_PACKAGE_luci=y
+          CONFIG_PACKAGE_luci-ssl=y
+          EOF
+          make defconfig
+
+      - name: Download Source Packages
+        run: |
+          cd openwrt
+          make download -j$(nproc)
+          find dl -size -1024c -exec rm -f {} \;
+
+      - name: Compile Firmware
+        run: |
+          cd openwrt
+          echo "Building on $(nproc) cores..."
+          make -j$(nproc) || make -j1 V=s
+
+      - name: Prepare Artifacts
+        run: |
+          cd openwrt
+          mkdir -p ../firmware-out
+          find bin/targets/mediatek/filogic/ -type f \( -name "*.bin" -o -name "*.img" -o -name "*.manifest" \) -exec cp {} ../firmware-out/ \;
+
+      - name: Upload Firmware Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Flint4-GL-BE14000-OpenWrt-Firmware
+          path: firmware-out/*
