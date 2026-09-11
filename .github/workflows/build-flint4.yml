@@ -31,9 +31,11 @@ jobs:
         run: |
           git clone --depth 1 -b flint4-support https://github.com/JiaY-shi/openwrt.git openwrt
 
-      - name: Update and Install Feeds
+      - name: Add Blogic Feed & Update Feeds
         run: |
           cd openwrt
+          # Add blogic package feed containing glinet-panel-ui and ucode-mod-lvgl
+          echo "src-git blogic https://github.com/blogic/feed-blogic.git" >> feeds.conf.default
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
@@ -47,6 +49,9 @@ jobs:
           CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_glinet_gl-be14000=y
           CONFIG_PACKAGE_luci=y
           CONFIG_PACKAGE_luci-ssl=y
+          CONFIG_PACKAGE_glinet-panel-ui=y
+          CONFIG_PACKAGE_luci-app-sqm=y
+          CONFIG_PACKAGE_kmod-sched-cake=y
           EOF
           make defconfig
 
