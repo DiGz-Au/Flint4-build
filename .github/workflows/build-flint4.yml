@@ -40,6 +40,12 @@ jobs:
       - name: Generate Target Configuration
         run: |
           cd openwrt
+          # Explicitly target MT7988 platform and Flint 4 profile
+          cat << 'EOF' > .config
+          CONFIG_TARGET_mediatek=y
+          CONFIG_TARGET_mediatek_mt7988=y
+          CONFIG_TARGET_mediatek_mt7988_DEVICE_glinet_gl-be14000=y
+          EOF
           make defconfig
 
       - name: Download Source Packages
@@ -55,7 +61,7 @@ jobs:
       - name: Prepare Artifacts
         run: |
           mkdir -p bin-artifacts
-          find openwrt/bin/targets/ -type f \( -name "*.bin" -o -name "*.tar" -o -name "*.manifest" \) -exec cp {} bin-artifacts/ \;
+          find openwrt/bin/targets/ -type f \( -name "*.bin" -o -name "*.manifest" \) -exec cp {} bin-artifacts/ \;
 
       - name: Upload Firmware Artifacts
         uses: actions/upload-artifact@v4
