@@ -3,190 +3,155 @@ name: Build Flint 4 Firmware
 on:
   workflow_dispatch:
 
-permissions:
-  contents: read
-
 jobs:
   build:
-    name: Flint 4 - GL-BE14000
-    runs-on: ubuntu-24.04
-    timeout-minutes: 240
-
-    env:
-      TERM: xterm
-      FORCE_UNSAFE_CONFIGURE: 1
-      MAKEFLAGS: -j2
+    name: Build GL-BE14000 OpenWrt
+    runs-on: ubuntu-22.04
 
     steps:
-      - name: Checkout Flint 4 branch
-        uses: actions/checkout@v4
+      - name: Maximize Build Space
+        uses: easimon/maximize-build-space@v10
         with:
-          repository: JiaY-shi/openwrt
-          ref: flint4-support-blogic-pr
-          fetch-depth: 1
+          root-reserve-mb: 20480
+          swap-size-mb: 1024
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          remove-codeql: 'true'
+          remove-docker-images: 'true'
 
-      - name: Install build dependencies
+      - name: Install Build Dependencies
         run: |
           sudo apt-get update
-
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+          sudo apt-get install -y \
             build-essential \
             clang \
             flex \
             bison \
-            g++ \
             gawk \
+            gcc-multilib \
+            g++-multilib \
             gettext \
             git \
-            libncurses-dev \
+            libncurses5-dev \
             libssl-dev \
-            libelf-dev \
-            libdw-dev \
-            python3 \
-            python3-setuptools \
+            python3-distutils \
             rsync \
-            swig \
             unzip \
             zlib1g-dev \
             file \
             wget \
-            curl \
-            ccache \
-            device-tree-compiler \
-            qemu-utils
+            device-tree-compiler
 
-      - name: Update feeds
+      - name: Checkout Repository
         run: |
+          git clone --depth 1 \
+            -b flint4-support-blogic-pr \
+            https://github.com/JiaY-shi/openwrt.git \
+            openwrt
+
+      - name: Show Source Revision
+        run: |
+          cd openwrt
+          echo "Branch:"
+          git branch --show-current
+          echo
+          echo "Commit:"
+          git log -1 --oneline
+
+      - name: Update and Install Feeds
+        run: |
+          cd openwrt
           ./scripts/feeds update -a
+          ./scripts/feeds install -a
 
-      - name: Install only required target feeds
+      - name: Generate Target Configuration
         run: |
-          # Install target packages, but avoid installing the complete
-          # package universe which contains the broken librespeed Kconfig.
-          ./scripts/feeds install -p base -a || true
+          cd openwrt
 
-      - name: Create Flint 4 configuration
-        shell: bash
-        run: |
-          set -e
-
-          export TERM=xterm
-
-          # Remove any configuration left by previous build attempts.
-          rm -f .config
-
-          # Create the minimum Flint 4 target configuration.
-          cat > .config <<'EOF'
+          cat << 'EOF' > .config
           CONFIG_TARGET_mediatek=y
           CONFIG_TARGET_mediatek_filogic=y
           CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_glinet_gl-be14000=y
+          CONFIG_PACKAGE_luci=y
+          CONFIG_PACKAGE_luci-ssl=y
           EOF
 
-          echo "=== Initial configuration ==="
-          cat .config
+          make defconfig
 
-      - name: Generate configuration non-interactively
-        shell: bash
+      - name: Show Final Configuration
         run: |
-          set -e
+          cd openwrt
 
-          export TERM=xterm
-          export KCONFIG_CONFIG="$PWD/.config"
-
-          # Build the configuration frontend.
-          make -C scripts/config
-
-          # Use the non-interactive 'olddefconfig' operation.
-          # Supplying /dev/null prevents mconf from waiting for input.
-          scripts/config/conf --olddefconfig Config.in </dev/null
-
-          echo
-          echo "=== Final target configuration ==="
+          echo "=== Target ==="
           grep '^CONFIG_TARGET_' .config | head -100
 
           echo
-          echo "=== Flint 4 selection ==="
-          grep 'CONFIG_TARGET_DEVICE.*glinet_gl-be14000' .config || true
-
-      - name: Verify Flint 4 source
-        run: |
-          echo "=== Device definitions ==="
-
-          find target/linux/mediatek \
-            -iname '*gl-be14000*' \
-            -print
+          echo "=== Flint 4 ==="
+          grep 'glinet_gl-be14000' .config || true
 
           echo
-          echo "=== Image definition ==="
+          echo "=== LuCI ==="
+          grep '^CONFIG_PACKAGE_luci' .config || true
 
-          grep -R "glinet_gl-be14000" \
-            target/linux/mediatek/image \
-            2>/dev/null || true
-
-      - name: Download sources
+      - name: Download Source Packages
         run: |
-          make download -j2
+          cd openwrt
 
-      - name: Remove incomplete downloads
+          make download -j$(nproc)
+
+          find dl -size -1024c -exec rm -f {} \;
+
+      - name: Compile Firmware
         run: |
-          find dl -type f -size -1024c -print -delete || true
+          cd openwrt
 
-      - name: Build Flint 4
-        shell: bash
-        run: |
-          set -e
+          echo "Building on $(nproc) cores..."
 
-          echo "=========================================="
-          echo "Building GL.iNet Flint 4 / GL-BE14000"
-          echo "=========================================="
+          make -j$(nproc) || make -j1 V=s
 
-          make -j"$(nproc)" V=s
-
-      - name: List generated images
+      - name: Prepare Artifacts
         if: success()
         run: |
-          echo "=========================================="
-          echo "Generated images"
-          echo "=========================================="
+          cd openwrt
 
-          find bin/targets/mediatek/filogic \
-            -maxdepth 1 \
+          mkdir -p ../firmware-out
+
+          find bin/targets/mediatek/filogic/ \
             -type f \
-            -print \
-            | sort
+            \( \
+              -name "*.bin" \
+              -o -name "*.img" \
+              -o -name "*.itb" \
+              -o -name "*.manifest" \
+              -o -name "*.json" \
+            \) \
+            -exec cp {} ../firmware-out/ \;
 
-      - name: Generate checksums
+          echo "=========================================="
+          echo "Generated firmware:"
+          echo "=========================================="
+
+          ls -lah ../firmware-out/
+
+      - name: Generate Checksums
         if: success()
-        shell: bash
         run: |
-          cd bin/targets/mediatek/filogic
+          cd firmware-out
 
-          rm -f sha256sums-flint4.txt
+          sha256sum \
+            *.bin \
+            *.img \
+            *.itb \
+            2>/dev/null \
+            > sha256sums.txt || true
 
-          for file in \
-            *gl-be14000*.bin \
-            *gl-be14000*.itb \
-            *gl-be14000*.gz
-          do
-            if [ -f "$file" ]; then
-              sha256sum "$file" >> sha256sums-flint4.txt
-            fi
-          done
+          cat sha256sums.txt || true
 
-          echo "=== SHA256 ==="
-          cat sha256sums-flint4.txt || true
-
-      - name: Upload Flint 4 firmware
+      - name: Upload Firmware Artifacts
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: flint4-gl-be14000-firmware
-          path: |
-            bin/targets/mediatek/filogic/*gl-be14000*.bin
-            bin/targets/mediatek/filogic/*gl-be14000*.itb
-            bin/targets/mediatek/filogic/*gl-be14000*.gz
-            bin/targets/mediatek/filogic/*gl-be14000*.manifest
-            bin/targets/mediatek/filogic/*gl-be14000*.json
-            bin/targets/mediatek/filogic/sha256sums-flint4.txt
-          if-no-files-found: error
+          name: Flint4-GL-BE14000-OpenWrt-Firmware
+          path: firmware-out/*
           retention-days: 30
