@@ -10,7 +10,7 @@ jobs:
 
     steps:
       # ------------------------------------------------------------
-      # Maximize GitHub runner build space
+      # Move the GitHub workspace onto the large build volume
       # ------------------------------------------------------------
       - name: Maximize Build Space
         uses: easimon/maximize-build-space@v10
@@ -24,20 +24,42 @@ jobs:
           remove-docker-images: 'true'
 
       # ------------------------------------------------------------
-      # Check available disk space
+      # Free the runner root filesystem
+      # The OpenWrt build itself will live in GITHUB_WORKSPACE,
+      # which has ~102 GB available.
       # ------------------------------------------------------------
-      - name: Check Disk Space
+      - name: Free System Disk Space
         run: |
           echo "=========================================="
-          echo "FILESYSTEMS"
+          echo "BEFORE CLEANUP"
           echo "=========================================="
-          df -h
+          df -h /
+
+          echo
+          echo "Removing large preinstalled components..."
+
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/share/powershell
+          sudo rm -rf /usr/local/share/chromium
+          sudo rm -rf /usr/local/lib/node_modules
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache
+
+          sudo apt-get clean
+          sudo rm -rf /var/lib/apt/lists/*
 
           echo
           echo "=========================================="
-          echo "LARGEST DIRECTORIES"
+          echo "AFTER CLEANUP"
           echo "=========================================="
-          sudo du -xh /opt /usr /home 2>/dev/null | sort -h | tail -30
+          df -h /
+
+          echo
+          echo "=========================================="
+          echo "BUILD WORKSPACE"
+          echo "=========================================="
+          df -h "$GITHUB_WORKSPACE"
 
       # ------------------------------------------------------------
       # Install build dependencies
@@ -65,6 +87,22 @@ jobs:
             file \
             wget \
             device-tree-compiler
+
+      # ------------------------------------------------------------
+      # Check disk after dependencies
+      # ------------------------------------------------------------
+      - name: Check Disk Space
+        run: |
+          echo "=========================================="
+          echo "ROOT FILESYSTEM"
+          echo "=========================================="
+          df -h /
+
+          echo
+          echo "=========================================="
+          echo "BUILD WORKSPACE"
+          echo "=========================================="
+          df -h "$GITHUB_WORKSPACE"
 
       # ------------------------------------------------------------
       # Checkout Flint 4 offload review branch
@@ -229,8 +267,17 @@ jobs:
           echo "=========================================="
 
           echo "CPU cores: $(nproc)"
+
+          echo
           echo "Make version:"
           make --version | head -1
+
+          echo
+          echo "Disk space:"
+          df -h .
+
+          echo
+          echo "Starting build..."
 
           make -j$(nproc) || make -j1 V=s
 
