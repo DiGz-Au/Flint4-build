@@ -65,7 +65,9 @@ jobs:
       - name: Prepare Artifacts
         run: |
           mkdir -p bin-artifacts
-          find openwrt/bin/targets/ -type f \( -name "*sysupgrade.bin" -o -name "*.manifest" \) -exec cp {} bin-artifacts/ \;
+          # Corrected to capture all .bin output files and manifests regardless of naming suffix
+          find openwrt/bin/targets/ -type f \( -name "*.bin" -o -name "*.manifest" \) -exec cp {} bin-artifacts/ \;
+          ls -lh bin-artifacts/
 
       - name: Upload Firmware Artifacts
         uses: actions/upload-artifact@v4
