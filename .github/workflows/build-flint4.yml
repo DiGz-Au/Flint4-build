@@ -26,7 +26,8 @@ jobs:
 
       - name: Configure Target
         run: |
-          echo "CONFIG_TARGET_mediatek=y" > .config
+          make defconfig
+          echo "CONFIG_TARGET_mediatek=y" >> .config
           echo "CONFIG_TARGET_mediatek_filogic=y" >> .config
           echo "CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_glinet_gl-be14000=y" >> .config
           make olddefconfig
