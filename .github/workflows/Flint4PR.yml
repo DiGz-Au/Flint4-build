@@ -9,9 +9,6 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-      # ------------------------------------------------------------
-      # Free runner disk space
-      # ------------------------------------------------------------
       - name: Free Runner Disk Space
         run: |
           sudo rm -rf /usr/share/dotnet
@@ -21,9 +18,6 @@ jobs:
           sudo docker image prune --all --force
           sudo apt-get clean
 
-      # ------------------------------------------------------------
-      # Build dependencies
-      # ------------------------------------------------------------
       - name: Install Build Dependencies
         run: |
           sudo apt-get update
@@ -48,9 +42,6 @@ jobs:
             wget \
             device-tree-compiler
 
-      # ------------------------------------------------------------
-      # Checkout current Flint 4 Blogic PR branch
-      # ------------------------------------------------------------
       - name: Checkout Flint 4 Blogic PR
         run: |
           git clone --depth 1 \
@@ -58,23 +49,21 @@ jobs:
             https://github.com/JiaY-shi/openwrt.git \
             openwrt
 
-      # ------------------------------------------------------------
-      # Add Blogic feed
-      #
-      # The PR already contains the Flint 4 screen/touch hardware
-      # support. This feed is only for the actual front-panel UI.
-      # ------------------------------------------------------------
       - name: Add Blogic Panel UI Feed
         working-directory: openwrt
         run: |
           echo "src-git blogic https://github.com/blogic/feed-blogic.git" >> feeds.conf.default
-
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
-      # ------------------------------------------------------------
-      # Configure GL-BE14000
-      # ------------------------------------------------------------
+      - name: Disable LibreSpeed packages
+        working-directory: openwrt
+        run: |
+          rm -f package/feeds/packages/librespeed-cli/Makefile
+          rm -f package/feeds/packages/librespeed-cli-rust/Makefile
+          rm -f package/feeds/packages/librespeed-common/Makefile
+          rm -f package/feeds/luci/luci-app-librespeed/Makefile
+
       - name: Generate Target Configuration
         working-directory: openwrt
         run: |
@@ -83,15 +72,12 @@ jobs:
           CONFIG_TARGET_mediatek_mt7988=y
           CONFIG_TARGET_mediatek_mt7988_DEVICE_glinet_gl-be14000=y
 
-          # Front-panel UI
+          # Flint 4 front-panel UI
           CONFIG_PACKAGE_glinet-panel-ui=y
           EOF
 
           make defconfig
 
-      # ------------------------------------------------------------
-      # Show what was selected
-      # ------------------------------------------------------------
       - name: Verify Configuration
         working-directory: openwrt
         run: |
@@ -110,31 +96,22 @@ jobs:
 
           echo
           echo "========================================"
-          echo "Panel / Touch / UI packages"
+          echo "Panel / Touch / UI"
           echo "========================================"
           grep -E \
-            'CONFIG_PACKAGE_(glinet-panel-ui|glinet-panel-firmware|ucode-mod-lvgl|lvgl|.*cst353x)' \
+            'CONFIG_PACKAGE_(glinet-panel-ui|glinet-panel-firmware|ucode-mod-lvgl|lvgl)' \
             .config || true
 
-      # ------------------------------------------------------------
-      # Download source packages
-      # ------------------------------------------------------------
       - name: Download Source Packages
         working-directory: openwrt
         run: |
           make download -j$(nproc)
 
-      # ------------------------------------------------------------
-      # Build firmware
-      # ------------------------------------------------------------
       - name: Compile Firmware
         working-directory: openwrt
         run: |
           make -j$(nproc) || make -j1 V=s
 
-      # ------------------------------------------------------------
-      # Collect firmware artifacts
-      # ------------------------------------------------------------
       - name: Prepare Artifacts
         run: |
           mkdir -p bin-artifacts
@@ -152,12 +129,8 @@ jobs:
           echo "========================================"
           echo "Firmware artifacts"
           echo "========================================"
-
           ls -lah bin-artifacts/
 
-      # ------------------------------------------------------------
-      # Upload firmware
-      # ------------------------------------------------------------
       - name: Upload Firmware Artifacts
         uses: actions/upload-artifact@v4
         with:
