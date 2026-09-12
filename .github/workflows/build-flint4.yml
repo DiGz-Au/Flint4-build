@@ -29,23 +29,27 @@ jobs:
         run: |
           git clone --depth 1 -b flint4-support https://github.com/JiaY-shi/openwrt.git openwrt
 
-      - name: Add Blogic & Panel Feeds
+      - name: Add Blogic Feed & Clean Conflicts
         run: |
           cd openwrt
           echo "src-git blogic https://github.com/blogic/feed-blogic.git" >> feeds.conf.default
-          echo "src-git glinet_panel https://github.com/blogic/glinet-panel-ui.git" >> feeds.conf.default
           ./scripts/feeds update -a
-          ./scripts/feeds install -a
+          
+          # Remove conflicting librespeed files to prevent Kconfig recursion errors
+          rm -rf feeds/packages/net/librespeed*
+          rm -rf feeds/luci/applications/luci-app-librespeed
+          
+          # Install only the specific panel UI package
+          ./scripts/feeds install glinet-panel-ui
 
       - name: Generate Target Configuration
         run: |
           cd openwrt
-          # Initialize default target configs from the branch
           make defconfig
-          # Append panel UI and LVGL packages
+          # Enable the panel UI and graphics dependencies
           echo "CONFIG_PACKAGE_glinet-panel-ui=y" >> .config
+          echo "CONFIG_PACKAGE_lvgl=y" >> .config
           echo "CONFIG_PACKAGE_ucode-mod-lvgl=y" >> .config
-          # Re-run defconfig to validate dependencies
           make defconfig
 
       - name: Download Source Packages
