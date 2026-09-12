@@ -28,7 +28,7 @@ jobs:
           echo "CONFIG_TARGET_mediatek=y" > .config
           echo "CONFIG_TARGET_mediatek_filogic=y" >> .config
           echo "CONFIG_TARGET_DEVICES_mediatek_filogic_DEVICE_glinet_gl-be14000=y" >> .config
-          make olddefconfig
+          make defconfig
 
       - name: Compile Firmware
         run: |
