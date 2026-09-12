@@ -1,4 +1,4 @@
-name: Build Flint 4 Firmware
+name: Build Flint 4 - Offload Review
 
 on:
   workflow_dispatch:
@@ -9,6 +9,9 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
+      # ------------------------------------------------------------
+      # Free up GitHub runner disk space
+      # ------------------------------------------------------------
       - name: Maximize Build Space
         uses: easimon/maximize-build-space@v10
         with:
@@ -20,6 +23,9 @@ jobs:
           remove-codeql: 'true'
           remove-docker-images: 'true'
 
+      # ------------------------------------------------------------
+      # Build dependencies
+      # ------------------------------------------------------------
       - name: Install Build Dependencies
         run: |
           sudo apt-get update
@@ -43,28 +49,78 @@ jobs:
             wget \
             device-tree-compiler
 
-      - name: Checkout Repository
+      # ------------------------------------------------------------
+      # Checkout JiaY-shi Flint 4 offload branch
+      # ------------------------------------------------------------
+      - name: Checkout Flint 4 Source
         run: |
           git clone --depth 1 \
-            -b flint4-support-blogic-pr \
+            -b flint4-offload-blogic-review \
             https://github.com/JiaY-shi/openwrt.git \
             openwrt
 
+      # ------------------------------------------------------------
+      # Show exactly what we're building
+      # ------------------------------------------------------------
       - name: Show Source Revision
         run: |
           cd openwrt
-          echo "Branch:"
-          git branch --show-current
-          echo
-          echo "Commit:"
-          git log -1 --oneline
 
-      - name: Update and Install Feeds
+          echo "=========================================="
+          echo "OpenWrt source"
+          echo "=========================================="
+
+          git branch --show-current
+          git log -1 --format='%H%n%ci%n%s'
+
+          echo
+          echo "=========================================="
+          echo "feeds.conf.default"
+          echo "=========================================="
+
+          cat feeds.conf.default
+
+      # ------------------------------------------------------------
+      # Update feeds
+      # ------------------------------------------------------------
+      - name: Update Feeds
         run: |
           cd openwrt
+
           ./scripts/feeds update -a
+
+      # ------------------------------------------------------------
+      # Show feed revisions BEFORE installing them
+      # Useful for diagnosing feed compatibility
+      # ------------------------------------------------------------
+      - name: Show Feed Revisions
+        run: |
+          cd openwrt
+
+          echo "=========================================="
+          echo "Feed revisions"
+          echo "=========================================="
+
+          for feed in feeds/*; do
+            if [ -d "$feed/.git" ]; then
+              echo
+              echo "[$feed]"
+              git -C "$feed" log -1 --format='%H %ci %s'
+            fi
+          done
+
+      # ------------------------------------------------------------
+      # Install feeds
+      # ------------------------------------------------------------
+      - name: Install Feeds
+        run: |
+          cd openwrt
+
           ./scripts/feeds install -a
 
+      # ------------------------------------------------------------
+      # Configure Flint 4
+      # ------------------------------------------------------------
       - name: Generate Target Configuration
         run: |
           cd openwrt
@@ -72,28 +128,59 @@ jobs:
           cat << 'EOF' > .config
           CONFIG_TARGET_mediatek=y
           CONFIG_TARGET_mediatek_filogic=y
+          CONFIG_TARGET_MULTI_PROFILE=y
           CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_glinet_gl-be14000=y
+
           CONFIG_PACKAGE_luci=y
           CONFIG_PACKAGE_luci-ssl=y
           EOF
 
           make defconfig
 
+      # ------------------------------------------------------------
+      # Show resulting configuration
+      # ------------------------------------------------------------
       - name: Show Final Configuration
         run: |
           cd openwrt
 
-          echo "=== Target ==="
+          echo "=========================================="
+          echo "TARGET"
+          echo "=========================================="
+
           grep '^CONFIG_TARGET_' .config | head -100
 
           echo
-          echo "=== Flint 4 ==="
+          echo "=========================================="
+          echo "FLINT 4"
+          echo "=========================================="
+
           grep 'glinet_gl-be14000' .config || true
 
           echo
-          echo "=== LuCI ==="
+          echo "=========================================="
+          echo "MULTI PROFILE"
+          echo "=========================================="
+
+          grep '^CONFIG_TARGET_MULTI_PROFILE' .config || true
+
+          echo
+          echo "=========================================="
+          echo "LUCI"
+          echo "=========================================="
+
           grep '^CONFIG_PACKAGE_luci' .config || true
 
+          echo
+          echo "=========================================="
+          echo "BRIDGER / OFFLOAD"
+          echo "=========================================="
+
+          grep -Ei 'bridger|yt922|offload' .config || true
+
+      # ------------------------------------------------------------
+      # Download sources
+      # ------------------------------------------------------------
       - name: Download Source Packages
         run: |
           cd openwrt
@@ -102,6 +189,9 @@ jobs:
 
           find dl -size -1024c -exec rm -f {} \;
 
+      # ------------------------------------------------------------
+      # Build firmware
+      # ------------------------------------------------------------
       - name: Compile Firmware
         run: |
           cd openwrt
@@ -110,6 +200,9 @@ jobs:
 
           make -j$(nproc) || make -j1 V=s
 
+      # ------------------------------------------------------------
+      # Collect firmware
+      # ------------------------------------------------------------
       - name: Prepare Artifacts
         if: success()
         run: |
@@ -128,12 +221,16 @@ jobs:
             \) \
             -exec cp {} ../firmware-out/ \;
 
+          echo
           echo "=========================================="
-          echo "Generated firmware:"
+          echo "Generated firmware"
           echo "=========================================="
 
           ls -lah ../firmware-out/
 
+      # ------------------------------------------------------------
+      # SHA256
+      # ------------------------------------------------------------
       - name: Generate Checksums
         if: success()
         run: |
@@ -148,10 +245,13 @@ jobs:
 
           cat sha256sums.txt || true
 
+      # ------------------------------------------------------------
+      # Upload firmware
+      # ------------------------------------------------------------
       - name: Upload Firmware Artifacts
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: Flint4-GL-BE14000-OpenWrt-Firmware
+          name: Flint4-GL-BE14000-Offload-Review
           path: firmware-out/*
           retention-days: 30
