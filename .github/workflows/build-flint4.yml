@@ -1,4 +1,4 @@
-name: Build Flint 4 Firmware
+name: Build Flint 4 Firmware with Touchscreen UI
 
 on:
   workflow_dispatch:
@@ -29,10 +29,9 @@ jobs:
         run: |
           git clone --depth 1 -b flint4-support https://github.com/JiaY-shi/openwrt.git openwrt
 
-      - name: Add Blogic Feeds
+      - name: Add Blogic & Panel Feeds
         run: |
           cd openwrt
-          # Add blogic feeds for glinet-panel-ui dependencies
           echo "src-git blogic https://github.com/blogic/feed-blogic.git" >> feeds.conf.default
           echo "src-git glinet_panel https://github.com/blogic/glinet-panel-ui.git" >> feeds.conf.default
           ./scripts/feeds update -a
@@ -41,16 +40,12 @@ jobs:
       - name: Generate Target Configuration
         run: |
           cd openwrt
-          # Target MediaTek Filogic and Flint 4 profile
-          cat << 'EOF' > .config
-          CONFIG_TARGET_mediatek=y
-          CONFIG_TARGET_mediatek_filogic=y
-          CONFIG_TARGET_mediatek_filogic_DEVICE_glinet_gl-be14000=y
-          
-          # Enable GL.iNet Panel UI and dependencies
-          CONFIG_PACKAGE_glinet-panel-ui=y
-          CONFIG_PACKAGE_ucode-mod-lvgl=y
-          EOF
+          # Initialize default target configs from the branch
+          make defconfig
+          # Append panel UI and LVGL packages
+          echo "CONFIG_PACKAGE_glinet-panel-ui=y" >> .config
+          echo "CONFIG_PACKAGE_ucode-mod-lvgl=y" >> .config
+          # Re-run defconfig to validate dependencies
           make defconfig
 
       - name: Download Source Packages
@@ -66,10 +61,10 @@ jobs:
       - name: Prepare Artifacts
         run: |
           mkdir -p bin-artifacts
-          find openwrt/bin/targets/ -type f \( -name "*.bin" -o -name "*.manifest" \) -exec cp {} bin-artifacts/ \;
+          find openwrt/bin/targets/ -type f \( -name "*sysupgrade.bin" -o -name "*.manifest" \) -exec cp {} bin-artifacts/ \;
 
       - name: Upload Firmware Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: GL-BE14000-OpenWrt-Firmware
+          name: GL-BE14000-OpenWrt-Touchscreen-Firmware
           path: bin-artifacts/
