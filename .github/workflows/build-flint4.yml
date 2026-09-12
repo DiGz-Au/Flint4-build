@@ -9,9 +9,10 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-      # ------------------------------------------------------------
+
+      # ============================================================
       # Free runner disk space
-      # ------------------------------------------------------------
+      # ============================================================
       - name: Free Runner Disk Space
         run: |
           sudo rm -rf /usr/share/dotnet
@@ -21,9 +22,9 @@ jobs:
           sudo docker image prune --all --force
           sudo apt-get clean
 
-      # ------------------------------------------------------------
-      # Dependencies
-      # ------------------------------------------------------------
+      # ============================================================
+      # Build dependencies
+      # ============================================================
       - name: Install Build Dependencies
         run: |
           sudo apt-get update
@@ -48,9 +49,9 @@ jobs:
             wget \
             device-tree-compiler
 
-      # ------------------------------------------------------------
-      # Checkout known-good Flint 4 support branch
-      # ------------------------------------------------------------
+      # ============================================================
+      # Flint 4 base
+      # ============================================================
       - name: Checkout Flint 4 Support
         run: |
           git clone --depth 1 \
@@ -58,134 +59,160 @@ jobs:
             https://github.com/JiaY-shi/openwrt.git \
             openwrt
 
-      # ------------------------------------------------------------
-      # Add Blogic feed
-      #
-      # Provides:
-      #   glinet-panel-ui
-      #   ucode-mod-lvgl
-      #   lvgl
-      #   panel-related packages
-      # ------------------------------------------------------------
+      # ============================================================
+      # Blogic panel feed
+      # ============================================================
       - name: Add Blogic Feed
         working-directory: openwrt
         run: |
-          echo "src-git blogic https://github.com/blogic/feed-blogic.git" >> feeds.conf.default
+          echo "src-git blogic https://github.com/blogic/feed-blogic.git" \
+            >> feeds.conf.default
 
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
-      # ------------------------------------------------------------
+      # ============================================================
       # Fix BE14000 touchscreen orientation
       #
-      # The panel is mounted 180 degrees around.
-      # The existing DTS swaps X/Y but needs both axes inverted too.
-      # ------------------------------------------------------------
+      # The physical panel is mounted 180 degrees around.
+      # Keep X/Y swapping and invert both axes.
+      # ============================================================
       - name: Fix BE14000 Touchscreen Rotation
         working-directory: openwrt
         run: |
           python3 <<'PY'
           from pathlib import Path
 
-          p = Path("target/linux/mediatek/dts/mt7988a-glinet-gl-be14000.dts")
+          p = Path(
+              "target/linux/mediatek/dts/"
+              "mt7988a-glinet-gl-be14000.dts"
+          )
 
           if not p.exists():
               raise SystemExit(
-                  f"ERROR: Could not find {p}"
+                  f"ERROR: BE14000 DTS not found: {p}"
               )
 
           s = p.read_text()
 
-          if (
-              "touchscreen-inverted-x;" in s
-              and "touchscreen-inverted-y;" in s
-          ):
-              print("Touchscreen rotation fix already present.")
-              raise SystemExit(0)
+          # Fix the explanatory comment if present.
+          s = s.replace(
+              """/* the panel sits 180 degrees rotated against the BE10000 one,
+               * so it needs the swap but neither inversion
+               */""",
+              """/* The panel is mounted 180 degrees rotated,
+               * so the touch axes must be swapped and both axes inverted.
+               */"""
+          )
 
-          old = "touchscreen-swapped-x-y;"
-          new = """touchscreen-swapped-x-y;
+          # Add the inversion properties if they aren't already there.
+          if "touchscreen-inverted-x;" not in s:
+              old = "touchscreen-swapped-x-y;"
+              new = """touchscreen-swapped-x-y;
                   touchscreen-inverted-x;
                   touchscreen-inverted-y;"""
 
-          if old not in s:
-              raise SystemExit(
-                  "ERROR: Could not find touchscreen-swapped-x-y "
-                  "in the BE14000 DTS."
+              if old not in s:
+                  raise SystemExit(
+                      "ERROR: touchscreen-swapped-x-y was not found"
+                  )
+
+              s = s.replace(old, new, 1)
+
+          elif "touchscreen-inverted-y;" not in s:
+              old = "touchscreen-inverted-x;"
+              s = s.replace(
+                  old,
+                  """touchscreen-inverted-x;
+                  touchscreen-inverted-y;""",
+                  1
               )
 
-          s = s.replace(old, new, 1)
           p.write_text(s)
 
-          print("Applied BE14000 180-degree touchscreen correction.")
+          print("BE14000 touchscreen rotation fix applied.")
           PY
 
-          echo
-          echo "Touchscreen DTS:"
-          grep -A12 -B4 "touchscreen" \
-            target/linux/mediatek/dts/mt7988a-glinet-gl-be14000.dts || true
+          echo "===== Touchscreen configuration ====="
+          grep -A12 -B4 "touchscreen@58" \
+            target/linux/mediatek/dts/mt7988a-glinet-gl-be14000.dts
 
-      # ------------------------------------------------------------
-      # Generate target configuration
-      # ------------------------------------------------------------
+      # ============================================================
+      # Configure target and panel UI
+      # ============================================================
       - name: Generate Target Configuration
         working-directory: openwrt
         run: |
           cat << 'EOF' > .config
+
           CONFIG_TARGET_mediatek=y
           CONFIG_TARGET_mediatek_mt7988=y
           CONFIG_TARGET_mediatek_mt7988_DEVICE_glinet_gl-be14000=y
 
-          # GL.iNet front-panel UI
+          # ========================================================
+          # Flint 4 front-panel UI
+          # ========================================================
+
           CONFIG_PACKAGE_glinet-panel-ui=y
+          CONFIG_PACKAGE_ucode-mod-lvgl=y
+
+          # These are enabled if the packages exist in this branch.
+          # make defconfig will resolve their actual dependencies.
+          CONFIG_PACKAGE_glinet-panel-firmware=y
+          CONFIG_PACKAGE_kmod-input-touchscreen-cst353x=y
+
           EOF
 
           make defconfig
 
-      # ------------------------------------------------------------
-      # Verify panel packages actually made it into the config
-      # ------------------------------------------------------------
-      - name: Verify Panel Configuration
+      # ============================================================
+      # Show resulting configuration
+      #
+      # IMPORTANT:
+      # Do not fail the build if a package isn't available.
+      # ============================================================
+      - name: Show Panel Configuration
         working-directory: openwrt
         run: |
-          echo "===== Panel packages ====="
+          echo "========================================"
+          echo "Panel packages"
+          echo "========================================"
 
           grep -E \
-            'CONFIG_PACKAGE_(glinet-panel-ui|glinet-panel-firmware|.*cst353x|ucode-mod-lvgl|lvgl)' \
+            'CONFIG_PACKAGE_(glinet-panel-ui|glinet-panel-firmware|kmod-input-touchscreen-cst353x|ucode-mod-lvgl|lvgl)' \
             .config || true
 
           echo
-          echo "===== Touchscreen DTS ====="
-
-          grep -A8 -B3 "touchscreen" \
-            target/linux/mediatek/dts/mt7988a-glinet-gl-be14000.dts || true
-
-          echo
-          echo "===== Target ====="
+          echo "========================================"
+          echo "Flint 4 target"
+          echo "========================================"
 
           grep -E \
-            'CONFIG_TARGET_mediatek_mt7988|CONFIG_TARGET_mediatek_mt7988_DEVICE_glinet_gl-be14000' \
-            .config
+            'CONFIG_TARGET_mediatek|CONFIG_TARGET.*gl-be14000' \
+            .config || true
 
-      # ------------------------------------------------------------
+          echo
+          echo "Configuration generated successfully."
+
+      # ============================================================
       # Download sources
-      # ------------------------------------------------------------
+      # ============================================================
       - name: Download Source Packages
         working-directory: openwrt
         run: |
           make download -j$(nproc)
 
-      # ------------------------------------------------------------
-      # Compile
-      # ------------------------------------------------------------
+      # ============================================================
+      # Compile firmware
+      # ============================================================
       - name: Compile Firmware
         working-directory: openwrt
         run: |
           make -j$(nproc) || make -j1 V=s
 
-      # ------------------------------------------------------------
+      # ============================================================
       # Collect firmware
-      # ------------------------------------------------------------
+      # ============================================================
       - name: Prepare Artifacts
         run: |
           mkdir -p bin-artifacts
@@ -200,12 +227,15 @@ jobs:
             \) \
             -exec cp {} bin-artifacts/ \;
 
-          echo "===== Firmware artifacts ====="
+          echo "========================================"
+          echo "Firmware artifacts"
+          echo "========================================"
+
           ls -lah bin-artifacts/
 
-      # ------------------------------------------------------------
+      # ============================================================
       # Upload firmware
-      # ------------------------------------------------------------
+      # ============================================================
       - name: Upload Firmware Artifacts
         uses: actions/upload-artifact@v4
         with:
