@@ -1,4 +1,4 @@
-name: Build Flint 4
+name: Build Flint 4 Firmware
 
 on:
   workflow_dispatch:
@@ -8,9 +8,13 @@ permissions:
 
 jobs:
   build:
-    name: Flint 4 (GL-BE14000)
+    name: Build GL.iNet Flint 4 (GL-BE14000)
     runs-on: ubuntu-24.04
     timeout-minutes: 240
+
+    env:
+      TERM: xterm
+      FORCE_UNSAFE_CONFIGURE: 1
 
     steps:
       - name: Checkout Flint 4 branch
@@ -20,9 +24,18 @@ jobs:
           ref: flint4-support-blogic-pr
           fetch-depth: 1
 
-      - name: Install dependencies
+      - name: Show source revision
+        run: |
+          echo "=== OpenWrt source ==="
+          git log -1 --oneline
+          echo
+          echo "=== Branch ==="
+          git branch --show-current
+
+      - name: Install build dependencies
         run: |
           sudo apt-get update
+
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
             build-essential \
             clang \
@@ -52,70 +65,52 @@ jobs:
       - name: Update feeds
         run: |
           ./scripts/feeds update -a
-          ./scripts/feeds install -a
 
-      - name: Select Flint 4 target
+      - name: Configure Flint 4
         run: |
+          export TERM=xterm
+
           cat > .config <<'EOF'
           CONFIG_TARGET_mediatek=y
           CONFIG_TARGET_mediatek_filogic=y
           CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_glinet_gl-be14000=y
           EOF
 
-          make defconfig
-
-      - name: Show configuration
-        run: |
-          echo "=== OpenWrt revision ==="
-          git log -1 --oneline
+          echo "=== Initial configuration ==="
+          cat .config
 
           echo
-          echo "=== Target ==="
-          grep '^CONFIG_TARGET_' .config | head -50
+          echo "=== Running defconfig ==="
+          make defconfig
+
+      - name: Verify target configuration
+        run: |
+          echo "=== Target configuration ==="
+          grep '^CONFIG_TARGET_' .config | head -100
 
           echo
           echo "=== Flint 4 ==="
           grep -i 'gl-be14000' .config || true
 
+          echo
+          echo "=== Target directory ==="
+          ls -la target/linux/mediatek/
+
       - name: Download sources
         run: |
           make download -j"$(nproc)"
 
+      - name: Remove incomplete downloads
+        run: |
+          find dl -size -1024c -type f -print -delete || true
+
       - name: Build firmware
         run: |
+          echo "Building Flint 4 with $(nproc) CPU threads..."
           make -j"$(nproc)" V=s
 
-      - name: Show firmware
+      - name: List generated firmware
         if: success()
         run: |
-          echo "=== Firmware files ==="
-          find bin/targets/mediatek/filogic -maxdepth 1 -type f \
-            -print | sort
-
-      - name: Generate SHA256 checksums
-        if: success()
-        run: |
-          cd bin/targets/mediatek/filogic
-
-          sha256sum \
-            *.bin \
-            *.itb \
-            *.gz \
-            2>/dev/null > sha256sums.txt || true
-
-          cat sha256sums.txt
-
-      - name: Upload firmware
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: flint4-gl-be14000
-          path: |
-            bin/targets/mediatek/filogic/*.bin
-            bin/targets/mediatek/filogic/*.itb
-            bin/targets/mediatek/filogic/*.gz
-            bin/targets/mediatek/filogic/*.manifest
-            bin/targets/mediatek/filogic/*.json
-            bin/targets/mediatek/filogic/sha256sums.txt
-          if-no-files-found: error
-          retention-days: 30
+          echo "========================================"
+          echo "Generated Flint 4
