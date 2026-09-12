@@ -1,11 +1,11 @@
-name: Build Flint 4 Firmware with Touchscreen UI
+name: Build Flint 4 Touchscreen Firmware
 
 on:
   workflow_dispatch:
 
 jobs:
   build:
-    name: Build GL-BE14000 OpenWrt
+    name: Build GL-BE14000 Firmware with Panel UI
     runs-on: ubuntu-22.04
 
     steps:
@@ -39,17 +39,24 @@ jobs:
           rm -rf feeds/packages/net/librespeed*
           rm -rf feeds/luci/applications/luci-app-librespeed
           
-          # Install only the specific panel UI package
+          # Install the panel UI package
           ./scripts/feeds install glinet-panel-ui
 
       - name: Generate Target Configuration
         run: |
           cd openwrt
           make defconfig
-          # Enable the panel UI and graphics dependencies
+          
+          # Explicitly target MediaTek Filogic and the GL-BE14000 device profile
+          echo "CONFIG_TARGET_mediatek_filogic=y" >> .config
+          echo "CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_glinet_gl-be14000=y" >> .config
+          
+          # Bake in the panel UI and its graphics requirements
           echo "CONFIG_PACKAGE_glinet-panel-ui=y" >> .config
           echo "CONFIG_PACKAGE_lvgl=y" >> .config
           echo "CONFIG_PACKAGE_ucode-mod-lvgl=y" >> .config
+          
+          # Run defconfig again to resolve dependencies and clean up the config
           make defconfig
 
       - name: Download Source Packages
@@ -60,17 +67,17 @@ jobs:
       - name: Compile Firmware
         run: |
           cd openwrt
-          make -j$(nproc) || make -j1 V=s
+          make -j$(nproc) || make V=s
 
       - name: Prepare Artifacts
         run: |
-          mkdir -p bin-artifacts
-          # Corrected to capture all .bin output files and manifests regardless of naming suffix
-          find openwrt/bin/targets/ -type f \( -name "*.bin" -o -name "*.manifest" \) -exec cp {} bin-artifacts/ \;
-          ls -lh bin-artifacts/
+          mkdir -p firmware-artifacts
+          # Copy all bin files and manifests for the gl-be14000 profile
+          find openwrt/bin/targets/ -type f \( -name "*gl-be14000*.bin" -o -name "*gl-be14000*.manifest" \) -exec cp {} firmware-artifacts/ \;
+          ls -lh firmware-artifacts/
 
       - name: Upload Firmware Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: GL-BE14000-OpenWrt-Touchscreen-Firmware
-          path: bin-artifacts/
+          name: GL-BE14000-Touchscreen-Firmware
+          path: firmware-artifacts/
