@@ -1,0 +1,165 @@
+name: Build Flint 4 Firmware
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build GL-BE14000 OpenWrt
+    runs-on: ubuntu-22.04
+
+    steps:
+      # ------------------------------------------------------------
+      # Free runner disk space
+      # ------------------------------------------------------------
+      - name: Free Runner Disk Space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/share/boost
+          sudo docker image prune --all --force
+          sudo apt-get clean
+
+      # ------------------------------------------------------------
+      # Build dependencies
+      # ------------------------------------------------------------
+      - name: Install Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            clang \
+            flex \
+            bison \
+            gawk \
+            gcc-multilib \
+            g++-multilib \
+            gettext \
+            git \
+            libncurses-dev \
+            libssl-dev \
+            python3-setuptools \
+            rsync \
+            swig \
+            unzip \
+            zlib1g-dev \
+            file \
+            wget \
+            device-tree-compiler
+
+      # ------------------------------------------------------------
+      # Checkout current Flint 4 Blogic PR branch
+      # ------------------------------------------------------------
+      - name: Checkout Flint 4 Blogic PR
+        run: |
+          git clone --depth 1 \
+            -b flint4-support-blogic-pr \
+            https://github.com/JiaY-shi/openwrt.git \
+            openwrt
+
+      # ------------------------------------------------------------
+      # Add Blogic feed
+      #
+      # The PR already contains the Flint 4 screen/touch hardware
+      # support. This feed is only for the actual front-panel UI.
+      # ------------------------------------------------------------
+      - name: Add Blogic Panel UI Feed
+        working-directory: openwrt
+        run: |
+          echo "src-git blogic https://github.com/blogic/feed-blogic.git" >> feeds.conf.default
+
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      # ------------------------------------------------------------
+      # Configure GL-BE14000
+      # ------------------------------------------------------------
+      - name: Generate Target Configuration
+        working-directory: openwrt
+        run: |
+          cat << 'EOF' > .config
+          CONFIG_TARGET_mediatek=y
+          CONFIG_TARGET_mediatek_mt7988=y
+          CONFIG_TARGET_mediatek_mt7988_DEVICE_glinet_gl-be14000=y
+
+          # Front-panel UI
+          CONFIG_PACKAGE_glinet-panel-ui=y
+          EOF
+
+          make defconfig
+
+      # ------------------------------------------------------------
+      # Show what was selected
+      # ------------------------------------------------------------
+      - name: Verify Configuration
+        working-directory: openwrt
+        run: |
+          echo "========================================"
+          echo "Git revision"
+          echo "========================================"
+          git log -1 --oneline
+
+          echo
+          echo "========================================"
+          echo "Target"
+          echo "========================================"
+          grep -E \
+            'CONFIG_TARGET_mediatek_mt7988|CONFIG_TARGET_mediatek_mt7988_DEVICE_glinet_gl-be14000' \
+            .config
+
+          echo
+          echo "========================================"
+          echo "Panel / Touch / UI packages"
+          echo "========================================"
+          grep -E \
+            'CONFIG_PACKAGE_(glinet-panel-ui|glinet-panel-firmware|ucode-mod-lvgl|lvgl|.*cst353x)' \
+            .config || true
+
+      # ------------------------------------------------------------
+      # Download source packages
+      # ------------------------------------------------------------
+      - name: Download Source Packages
+        working-directory: openwrt
+        run: |
+          make download -j$(nproc)
+
+      # ------------------------------------------------------------
+      # Build firmware
+      # ------------------------------------------------------------
+      - name: Compile Firmware
+        working-directory: openwrt
+        run: |
+          make -j$(nproc) || make -j1 V=s
+
+      # ------------------------------------------------------------
+      # Collect firmware artifacts
+      # ------------------------------------------------------------
+      - name: Prepare Artifacts
+        run: |
+          mkdir -p bin-artifacts
+
+          find openwrt/bin/targets/ \
+            -type f \
+            \( \
+              -name "*.bin" \
+              -o -name "*.manifest" \
+              -o -name "*.itb" \
+              -o -name "*.img" \
+            \) \
+            -exec cp {} bin-artifacts/ \;
+
+          echo "========================================"
+          echo "Firmware artifacts"
+          echo "========================================"
+
+          ls -lah bin-artifacts/
+
+      # ------------------------------------------------------------
+      # Upload firmware
+      # ------------------------------------------------------------
+      - name: Upload Firmware Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: GL-BE14000-Flint4-Blogic-PanelUI
+          path: bin-artifacts/
