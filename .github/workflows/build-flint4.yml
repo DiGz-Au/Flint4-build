@@ -15,6 +15,7 @@ jobs:
     env:
       TERM: xterm
       FORCE_UNSAFE_CONFIGURE: 1
+      MAKEFLAGS: -j2
 
     steps:
       - name: Checkout Flint 4 branch
@@ -23,13 +24,6 @@ jobs:
           repository: JiaY-shi/openwrt
           ref: flint4-support-blogic-pr
           fetch-depth: 1
-
-      - name: Show source revision
-        run: |
-          echo "OpenWrt revision:"
-          git log -1 --oneline
-          echo
-          git status --short
 
       - name: Install build dependencies
         run: |
@@ -65,53 +59,73 @@ jobs:
         run: |
           ./scripts/feeds update -a
 
-      - name: Prepare OpenWrt configuration
+      - name: Install only required target feeds
+        run: |
+          # Install target packages, but avoid installing the complete
+          # package universe which contains the broken librespeed Kconfig.
+          ./scripts/feeds install -p base -a || true
+
+      - name: Create Flint 4 configuration
         shell: bash
         run: |
           set -e
 
           export TERM=xterm
 
-          echo "Creating non-interactive Flint 4 configuration..."
+          # Remove any configuration left by previous build attempts.
+          rm -f .config
 
+          # Create the minimum Flint 4 target configuration.
           cat > .config <<'EOF'
           CONFIG_TARGET_mediatek=y
           CONFIG_TARGET_mediatek_filogic=y
           CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_glinet_gl-be14000=y
           EOF
 
-          echo
-          echo "Initial .config:"
+          echo "=== Initial configuration ==="
           cat .config
 
-          echo
-          echo "Running non-interactive configuration..."
+      - name: Generate configuration non-interactively
+        shell: bash
+        run: |
+          set -e
 
-          # Generate the configuration without launching menuconfig.
-          ./scripts/config/conf --defconfig=.config Config.in
+          export TERM=xterm
+          export KCONFIG_CONFIG="$PWD/.config"
+
+          # Build the configuration frontend.
+          make -C scripts/config
+
+          # Use the non-interactive 'olddefconfig' operation.
+          # Supplying /dev/null prevents mconf from waiting for input.
+          scripts/config/conf --olddefconfig Config.in </dev/null
 
           echo
-          echo "Final target configuration:"
+          echo "=== Final target configuration ==="
           grep '^CONFIG_TARGET_' .config | head -100
 
           echo
-          echo "Flint 4 configuration:"
-          grep -i 'gl-be14000' .config || true
+          echo "=== Flint 4 selection ==="
+          grep 'CONFIG_TARGET_DEVICE.*glinet_gl-be14000' .config || true
 
-      - name: Verify target files
+      - name: Verify Flint 4 source
         run: |
-          echo "=== Flint 4 DTS ==="
-          find target/linux/mediatek -iname '*gl-be14000*' -print
+          echo "=== Device definitions ==="
+
+          find target/linux/mediatek \
+            -iname '*gl-be14000*' \
+            -print
 
           echo
-          echo "=== Flint 4 image definition ==="
+          echo "=== Image definition ==="
+
           grep -R "glinet_gl-be14000" \
             target/linux/mediatek/image \
             2>/dev/null || true
 
       - name: Download sources
         run: |
-          make download -j"$(nproc)"
+          make download -j2
 
       - name: Remove incomplete downloads
         run: |
@@ -122,38 +136,22 @@ jobs:
         run: |
           set -e
 
-          echo "Starting Flint 4 build..."
-          echo "CPU threads: $(nproc)"
+          echo "=========================================="
+          echo "Building GL.iNet Flint 4 / GL-BE14000"
+          echo "=========================================="
 
           make -j"$(nproc)" V=s
 
-      - name: List firmware
+      - name: List generated images
         if: success()
         run: |
           echo "=========================================="
-          echo "Flint 4 firmware files"
+          echo "Generated images"
           echo "=========================================="
 
           find bin/targets/mediatek/filogic \
             -maxdepth 1 \
             -type f \
-            -print \
-            | sort
-
-      - name: Show Flint 4 images
-        if: success()
-        run: |
-          echo "=========================================="
-          echo "GL-BE14000 images"
-          echo "=========================================="
-
-          find bin/targets/mediatek/filogic \
-            -maxdepth 1 \
-            -type f \
-            \( \
-              -iname '*gl-be14000*' \
-              -o -iname '*be14000*' \
-            \) \
             -print \
             | sort
 
@@ -175,8 +173,7 @@ jobs:
             fi
           done
 
-          echo
-          echo "SHA256:"
+          echo "=== SHA256 ==="
           cat sha256sums-flint4.txt || true
 
       - name: Upload Flint 4 firmware
