@@ -26,11 +26,10 @@ jobs:
 
       - name: Configure Target for GL-BE14000
         run: |
-          make defconfig
-          echo "CONFIG_TARGET_mediatek=y" >> .config
+          echo "CONFIG_TARGET_mediatek=y" > .config
           echo "CONFIG_TARGET_mediatek_filogic=y" >> .config
-          echo "CONFIG_TARGET_DEVICES_mediatek_filogic_DEVICE_glinet_gl-be14000=y" >> .config
-          make olddefconfig
+          echo "CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_glinet_gl-be14000=y" >> .config
+          make defconfig
         env:
           DEBIAN_FRONTEND: noninteractive
 
