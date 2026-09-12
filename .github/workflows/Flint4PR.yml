@@ -78,7 +78,7 @@ jobs:
           CONFIG_PACKAGE_glinet-panel-ui=y
           EOF
 
-          make defconfig
+          make olddefconfig
 
       - name: Verify Configuration
         working-directory: openwrt
