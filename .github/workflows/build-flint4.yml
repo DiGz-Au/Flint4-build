@@ -6,12 +6,9 @@ on:
 jobs:
   build:
     name: Build GL-BE14000 OpenWrt
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
 
     steps:
-      # ------------------------------------------------------------
-      # Move the GitHub workspace onto the large build volume
-      # ------------------------------------------------------------
       - name: Maximize Build Space
         uses: easimon/maximize-build-space@v10
         with:
@@ -23,11 +20,6 @@ jobs:
           remove-codeql: 'true'
           remove-docker-images: 'true'
 
-      # ------------------------------------------------------------
-      # Free the runner root filesystem
-      # The OpenWrt build itself will live in GITHUB_WORKSPACE,
-      # which has ~102 GB available.
-      # ------------------------------------------------------------
       - name: Free System Disk Space
         run: |
           echo "=========================================="
@@ -61,9 +53,6 @@ jobs:
           echo "=========================================="
           df -h "$GITHUB_WORKSPACE"
 
-      # ------------------------------------------------------------
-      # Install build dependencies
-      # ------------------------------------------------------------
       - name: Install Build Dependencies
         run: |
           sudo apt-get update
@@ -88,9 +77,6 @@ jobs:
             wget \
             device-tree-compiler
 
-      # ------------------------------------------------------------
-      # Check disk after dependencies
-      # ------------------------------------------------------------
       - name: Check Disk Space
         run: |
           echo "=========================================="
@@ -104,9 +90,6 @@ jobs:
           echo "=========================================="
           df -h "$GITHUB_WORKSPACE"
 
-      # ------------------------------------------------------------
-      # Checkout Flint 4 offload review branch
-      # ------------------------------------------------------------
       - name: Checkout Flint 4 Source
         run: |
           git clone --depth 1 \
@@ -114,9 +97,6 @@ jobs:
             https://github.com/JiaY-shi/openwrt.git \
             openwrt
 
-      # ------------------------------------------------------------
-      # Show exact source revision
-      # ------------------------------------------------------------
       - name: Show Source Revision
         run: |
           cd openwrt
@@ -147,18 +127,11 @@ jobs:
 
           cat feeds.conf.default
 
-      # ------------------------------------------------------------
-      # Update feeds
-      # ------------------------------------------------------------
       - name: Update Feeds
         run: |
           cd openwrt
-
           ./scripts/feeds update -a
 
-      # ------------------------------------------------------------
-      # Show exact feed revisions
-      # ------------------------------------------------------------
       - name: Show Feed Revisions
         run: |
           cd openwrt
@@ -175,18 +148,56 @@ jobs:
             fi
           done
 
-      # ------------------------------------------------------------
-      # Install feeds
-      # ------------------------------------------------------------
       - name: Install Feeds
         run: |
           cd openwrt
-
           ./scripts/feeds install -a
 
-      # ------------------------------------------------------------
-      # Generate Flint 4 configuration
-      # ------------------------------------------------------------
+      - name: Diagnose LibreSpeed Definitions
+        run: |
+          cd openwrt
+
+          echo "=========================================="
+          echo "LIBRESPEED FILES"
+          echo "=========================================="
+
+          find . \
+            -type f \
+            \( \
+              -iname '*librespeed*' \
+              -o -name 'Makefile' \
+              -o -name 'Config.in' \
+            \) \
+            -print \
+            2>/dev/null | grep -i librespeed || true
+
+          echo
+          echo "=========================================="
+          echo "LIBRESPEED REFERENCES"
+          echo "=========================================="
+
+          grep -Rni \
+            -E \
+            'librespeed-cli|librespeed-common|librespeed-cli-rust|luci-app-librespeed' \
+            package \
+            feeds \
+            include \
+            2>/dev/null || true
+
+          echo
+          echo "=========================================="
+          echo "GENERATED KCONFIG REFERENCES"
+          echo "=========================================="
+
+          if [ -f tmp/.config-package.in ]; then
+            grep -n -B5 -A10 \
+              -E \
+              'librespeed-cli|librespeed-common|librespeed-cli-rust|luci-app-librespeed' \
+              tmp/.config-package.in || true
+          else
+            echo "tmp/.config-package.in does not exist yet"
+          fi
+
       - name: Generate Target Configuration
         run: |
           cd openwrt
@@ -196,16 +207,12 @@ jobs:
           CONFIG_TARGET_mediatek_filogic=y
           CONFIG_TARGET_MULTI_PROFILE=y
           CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_glinet_gl-be14000=y
-
           CONFIG_PACKAGE_luci=y
           CONFIG_PACKAGE_luci-ssl=y
           EOF
 
           make defconfig
 
-      # ------------------------------------------------------------
-      # Show final configuration
-      # ------------------------------------------------------------
       - name: Show Final Configuration
         run: |
           cd openwrt
@@ -244,9 +251,6 @@ jobs:
 
           grep -Ei 'bridger|yt922|offload' .config || true
 
-      # ------------------------------------------------------------
-      # Download source packages
-      # ------------------------------------------------------------
       - name: Download Source Packages
         run: |
           cd openwrt
@@ -255,9 +259,6 @@ jobs:
 
           find dl -size -1024c -exec rm -f {} \;
 
-      # ------------------------------------------------------------
-      # Compile firmware
-      # ------------------------------------------------------------
       - name: Compile Firmware
         run: |
           cd openwrt
@@ -281,9 +282,6 @@ jobs:
 
           make -j$(nproc) || make -j1 V=s
 
-      # ------------------------------------------------------------
-      # Prepare firmware artifacts
-      # ------------------------------------------------------------
       - name: Prepare Artifacts
         if: success()
         run: |
@@ -309,9 +307,6 @@ jobs:
 
           ls -lah ../firmware-out/
 
-      # ------------------------------------------------------------
-      # Generate SHA256 checksums
-      # ------------------------------------------------------------
       - name: Generate Checksums
         if: success()
         run: |
@@ -330,9 +325,6 @@ jobs:
 
           cat sha256sums.txt || true
 
-      # ------------------------------------------------------------
-      # Upload firmware artifacts
-      # ------------------------------------------------------------
       - name: Upload Firmware Artifacts
         if: success()
         uses: actions/upload-artifact@v4
