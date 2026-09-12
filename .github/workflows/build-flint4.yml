@@ -1,4 +1,4 @@
-name: Build Flint 4 - Offload Review
+name: Build Flint 4 Firmware
 
 on:
   workflow_dispatch:
@@ -6,57 +6,27 @@ on:
 jobs:
   build:
     name: Build GL-BE14000 OpenWrt
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
 
     steps:
-      - name: Maximize Build Space
-        uses: easimon/maximize-build-space@v10
-        with:
-          root-reserve-mb: 1024
-          swap-size-mb: 1024
-          remove-dotnet: 'true'
-          remove-android: 'true'
-          remove-haskell: 'true'
-          remove-codeql: 'true'
-          remove-docker-images: 'true'
-
-      - name: Free System Disk Space
+      # ------------------------------------------------------------
+      # Free runner disk space
+      # ------------------------------------------------------------
+      - name: Free Runner Disk Space
         run: |
-          echo "=========================================="
-          echo "BEFORE CLEANUP"
-          echo "=========================================="
-          df -h /
-
-          echo
-          echo "Removing large preinstalled components..."
-
-          sudo rm -rf /usr/local/lib/android
           sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /usr/local/share/powershell
-          sudo rm -rf /usr/local/share/chromium
-          sudo rm -rf /usr/local/lib/node_modules
+          sudo rm -rf /usr/local/lib/android
           sudo rm -rf /opt/ghc
-          sudo rm -rf /opt/hostedtoolcache
-
+          sudo rm -rf /usr/local/share/boost
+          sudo docker image prune --all --force
           sudo apt-get clean
-          sudo rm -rf /var/lib/apt/lists/*
 
-          echo
-          echo "=========================================="
-          echo "AFTER CLEANUP"
-          echo "=========================================="
-          df -h /
-
-          echo
-          echo "=========================================="
-          echo "BUILD WORKSPACE"
-          echo "=========================================="
-          df -h "$GITHUB_WORKSPACE"
-
+      # ------------------------------------------------------------
+      # Dependencies
+      # ------------------------------------------------------------
       - name: Install Build Dependencies
         run: |
           sudo apt-get update
-
           sudo apt-get install -y \
             build-essential \
             clang \
@@ -67,267 +37,177 @@ jobs:
             g++-multilib \
             gettext \
             git \
-            libncurses5-dev \
+            libncurses-dev \
             libssl-dev \
+            python3-setuptools \
             rsync \
+            swig \
             unzip \
             zlib1g-dev \
             file \
             wget \
             device-tree-compiler
 
-      - name: Check Disk Space
-        run: |
-          echo "=========================================="
-          echo "ROOT FILESYSTEM"
-          echo "=========================================="
-          df -h /
-
-          echo
-          echo "=========================================="
-          echo "BUILD WORKSPACE"
-          echo "=========================================="
-          df -h "$GITHUB_WORKSPACE"
-
-      - name: Checkout Flint 4 Source
+      # ------------------------------------------------------------
+      # Checkout known-good Flint 4 support branch
+      # ------------------------------------------------------------
+      - name: Checkout Flint 4 Support
         run: |
           git clone --depth 1 \
-            -b flint4-offload-blogic-review \
+            -b flint4-support \
             https://github.com/JiaY-shi/openwrt.git \
             openwrt
 
-      - name: Show Source Revision
+      # ------------------------------------------------------------
+      # Add Blogic feed
+      #
+      # Provides:
+      #   glinet-panel-ui
+      #   ucode-mod-lvgl
+      #   lvgl
+      #   panel-related packages
+      # ------------------------------------------------------------
+      - name: Add Blogic Feed
+        working-directory: openwrt
         run: |
-          cd openwrt
+          echo "src-git blogic https://github.com/blogic/feed-blogic.git" >> feeds.conf.default
 
-          echo "=========================================="
-          echo "OPENWRT SOURCE"
-          echo "=========================================="
-
-          echo "Branch:"
-          git branch --show-current
-
-          echo
-          echo "Commit:"
-          git log -1 --format='%H'
-
-          echo
-          echo "Date:"
-          git log -1 --format='%ci'
-
-          echo
-          echo "Subject:"
-          git log -1 --format='%s'
-
-          echo
-          echo "=========================================="
-          echo "FEEDS CONFIGURATION"
-          echo "=========================================="
-
-          cat feeds.conf.default
-
-      - name: Update Feeds
-        run: |
-          cd openwrt
           ./scripts/feeds update -a
-
-      - name: Show Feed Revisions
-        run: |
-          cd openwrt
-
-          echo "=========================================="
-          echo "FEED REVISIONS"
-          echo "=========================================="
-
-          for feed in feeds/*; do
-            if [ -d "$feed/.git" ]; then
-              echo
-              echo "[$feed]"
-              git -C "$feed" log -1 --format='%H %ci %s'
-            fi
-          done
-
-      - name: Install Feeds
-        run: |
-          cd openwrt
           ./scripts/feeds install -a
 
-      - name: Diagnose LibreSpeed Definitions
+      # ------------------------------------------------------------
+      # Fix BE14000 touchscreen orientation
+      #
+      # The panel is mounted 180 degrees around.
+      # The existing DTS swaps X/Y but needs both axes inverted too.
+      # ------------------------------------------------------------
+      - name: Fix BE14000 Touchscreen Rotation
+        working-directory: openwrt
         run: |
-          cd openwrt
+          python3 <<'PY'
+          from pathlib import Path
 
-          echo "=========================================="
-          echo "LIBRESPEED FILES"
-          echo "=========================================="
+          p = Path("target/linux/mediatek/dts/mt7988a-glinet-gl-be14000.dts")
 
-          find . \
-            -type f \
-            \( \
-              -iname '*librespeed*' \
-              -o -name 'Makefile' \
-              -o -name 'Config.in' \
-            \) \
-            -print \
-            2>/dev/null | grep -i librespeed || true
+          if not p.exists():
+              raise SystemExit(
+                  f"ERROR: Could not find {p}"
+              )
+
+          s = p.read_text()
+
+          if (
+              "touchscreen-inverted-x;" in s
+              and "touchscreen-inverted-y;" in s
+          ):
+              print("Touchscreen rotation fix already present.")
+              raise SystemExit(0)
+
+          old = "touchscreen-swapped-x-y;"
+          new = """touchscreen-swapped-x-y;
+                  touchscreen-inverted-x;
+                  touchscreen-inverted-y;"""
+
+          if old not in s:
+              raise SystemExit(
+                  "ERROR: Could not find touchscreen-swapped-x-y "
+                  "in the BE14000 DTS."
+              )
+
+          s = s.replace(old, new, 1)
+          p.write_text(s)
+
+          print("Applied BE14000 180-degree touchscreen correction.")
+          PY
 
           echo
-          echo "=========================================="
-          echo "LIBRESPEED REFERENCES"
-          echo "=========================================="
+          echo "Touchscreen DTS:"
+          grep -A12 -B4 "touchscreen" \
+            target/linux/mediatek/dts/mt7988a-glinet-gl-be14000.dts || true
 
-          grep -Rni \
-            -E \
-            'librespeed-cli|librespeed-common|librespeed-cli-rust|luci-app-librespeed' \
-            package \
-            feeds \
-            include \
-            2>/dev/null || true
-
-          echo
-          echo "=========================================="
-          echo "GENERATED KCONFIG REFERENCES"
-          echo "=========================================="
-
-          if [ -f tmp/.config-package.in ]; then
-            grep -n -B5 -A10 \
-              -E \
-              'librespeed-cli|librespeed-common|librespeed-cli-rust|luci-app-librespeed' \
-              tmp/.config-package.in || true
-          else
-            echo "tmp/.config-package.in does not exist yet"
-          fi
-
+      # ------------------------------------------------------------
+      # Generate target configuration
+      # ------------------------------------------------------------
       - name: Generate Target Configuration
+        working-directory: openwrt
         run: |
-          cd openwrt
-
           cat << 'EOF' > .config
           CONFIG_TARGET_mediatek=y
-          CONFIG_TARGET_mediatek_filogic=y
-          CONFIG_TARGET_MULTI_PROFILE=y
-          CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_glinet_gl-be14000=y
-          CONFIG_PACKAGE_luci=y
-          CONFIG_PACKAGE_luci-ssl=y
+          CONFIG_TARGET_mediatek_mt7988=y
+          CONFIG_TARGET_mediatek_mt7988_DEVICE_glinet_gl-be14000=y
+
+          # GL.iNet front-panel UI
+          CONFIG_PACKAGE_glinet-panel-ui=y
           EOF
 
           make defconfig
 
-      - name: Show Final Configuration
+      # ------------------------------------------------------------
+      # Verify panel packages actually made it into the config
+      # ------------------------------------------------------------
+      - name: Verify Panel Configuration
+        working-directory: openwrt
         run: |
-          cd openwrt
+          echo "===== Panel packages ====="
 
-          echo "=========================================="
-          echo "TARGET"
-          echo "=========================================="
-
-          grep '^CONFIG_TARGET_' .config | head -100
+          grep -E \
+            'CONFIG_PACKAGE_(glinet-panel-ui|glinet-panel-firmware|.*cst353x|ucode-mod-lvgl|lvgl)' \
+            .config || true
 
           echo
-          echo "=========================================="
-          echo "FLINT 4"
-          echo "=========================================="
+          echo "===== Touchscreen DTS ====="
 
-          grep 'glinet_gl-be14000' .config || true
-
-          echo
-          echo "=========================================="
-          echo "MULTI PROFILE"
-          echo "=========================================="
-
-          grep '^CONFIG_TARGET_MULTI_PROFILE' .config || true
+          grep -A8 -B3 "touchscreen" \
+            target/linux/mediatek/dts/mt7988a-glinet-gl-be14000.dts || true
 
           echo
-          echo "=========================================="
-          echo "LUCI"
-          echo "=========================================="
+          echo "===== Target ====="
 
-          grep '^CONFIG_PACKAGE_luci' .config || true
+          grep -E \
+            'CONFIG_TARGET_mediatek_mt7988|CONFIG_TARGET_mediatek_mt7988_DEVICE_glinet_gl-be14000' \
+            .config
 
-          echo
-          echo "=========================================="
-          echo "OFFLOAD / BRIDGER"
-          echo "=========================================="
-
-          grep -Ei 'bridger|yt922|offload' .config || true
-
+      # ------------------------------------------------------------
+      # Download sources
+      # ------------------------------------------------------------
       - name: Download Source Packages
+        working-directory: openwrt
         run: |
-          cd openwrt
-
           make download -j$(nproc)
 
-          find dl -size -1024c -exec rm -f {} \;
-
+      # ------------------------------------------------------------
+      # Compile
+      # ------------------------------------------------------------
       - name: Compile Firmware
+        working-directory: openwrt
         run: |
-          cd openwrt
-
-          echo "=========================================="
-          echo "BUILD"
-          echo "=========================================="
-
-          echo "CPU cores: $(nproc)"
-
-          echo
-          echo "Make version:"
-          make --version | head -1
-
-          echo
-          echo "Disk space:"
-          df -h .
-
-          echo
-          echo "Starting build..."
-
           make -j$(nproc) || make -j1 V=s
 
+      # ------------------------------------------------------------
+      # Collect firmware
+      # ------------------------------------------------------------
       - name: Prepare Artifacts
-        if: success()
         run: |
-          cd openwrt
+          mkdir -p bin-artifacts
 
-          mkdir -p ../firmware-out
-
-          find bin/targets/mediatek/filogic/ \
+          find openwrt/bin/targets/ \
             -type f \
             \( \
               -name "*.bin" \
-              -o -name "*.img" \
-              -o -name "*.itb" \
               -o -name "*.manifest" \
-              -o -name "*.json" \
+              -o -name "*.itb" \
+              -o -name "*.img" \
             \) \
-            -exec cp {} ../firmware-out/ \;
+            -exec cp {} bin-artifacts/ \;
 
-          echo
-          echo "=========================================="
-          echo "GENERATED FIRMWARE"
-          echo "=========================================="
+          echo "===== Firmware artifacts ====="
+          ls -lah bin-artifacts/
 
-          ls -lah ../firmware-out/
-
-      - name: Generate Checksums
-        if: success()
-        run: |
-          cd firmware-out
-
-          sha256sum \
-            *.bin \
-            *.img \
-            *.itb \
-            2>/dev/null \
-            > sha256sums.txt || true
-
-          echo "=========================================="
-          echo "SHA256"
-          echo "=========================================="
-
-          cat sha256sums.txt || true
-
+      # ------------------------------------------------------------
+      # Upload firmware
+      # ------------------------------------------------------------
       - name: Upload Firmware Artifacts
-        if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: Flint4-GL-BE14000-Offload-Review
-          path: firmware-out/*
-          retention-days: 30
+          name: GL-BE14000-OpenWrt-Flint4-PanelUI
+          path: bin-artifacts/
