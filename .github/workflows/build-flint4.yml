@@ -10,12 +10,12 @@ jobs:
 
     steps:
       # ------------------------------------------------------------
-      # Free up GitHub runner disk space
+      # Maximize GitHub runner build space
       # ------------------------------------------------------------
       - name: Maximize Build Space
         uses: easimon/maximize-build-space@v10
         with:
-          root-reserve-mb: 20480
+          root-reserve-mb: 1024
           swap-size-mb: 1024
           remove-dotnet: 'true'
           remove-android: 'true'
@@ -24,11 +24,28 @@ jobs:
           remove-docker-images: 'true'
 
       # ------------------------------------------------------------
-      # Build dependencies
+      # Check available disk space
+      # ------------------------------------------------------------
+      - name: Check Disk Space
+        run: |
+          echo "=========================================="
+          echo "FILESYSTEMS"
+          echo "=========================================="
+          df -h
+
+          echo
+          echo "=========================================="
+          echo "LARGEST DIRECTORIES"
+          echo "=========================================="
+          sudo du -xh /opt /usr /home 2>/dev/null | sort -h | tail -30
+
+      # ------------------------------------------------------------
+      # Install build dependencies
       # ------------------------------------------------------------
       - name: Install Build Dependencies
         run: |
           sudo apt-get update
+
           sudo apt-get install -y \
             build-essential \
             clang \
@@ -50,7 +67,7 @@ jobs:
             device-tree-compiler
 
       # ------------------------------------------------------------
-      # Checkout JiaY-shi Flint 4 offload branch
+      # Checkout Flint 4 offload review branch
       # ------------------------------------------------------------
       - name: Checkout Flint 4 Source
         run: |
@@ -60,22 +77,34 @@ jobs:
             openwrt
 
       # ------------------------------------------------------------
-      # Show exactly what we're building
+      # Show exact source revision
       # ------------------------------------------------------------
       - name: Show Source Revision
         run: |
           cd openwrt
 
           echo "=========================================="
-          echo "OpenWrt source"
+          echo "OPENWRT SOURCE"
           echo "=========================================="
 
+          echo "Branch:"
           git branch --show-current
-          git log -1 --format='%H%n%ci%n%s'
+
+          echo
+          echo "Commit:"
+          git log -1 --format='%H'
+
+          echo
+          echo "Date:"
+          git log -1 --format='%ci'
+
+          echo
+          echo "Subject:"
+          git log -1 --format='%s'
 
           echo
           echo "=========================================="
-          echo "feeds.conf.default"
+          echo "FEEDS CONFIGURATION"
           echo "=========================================="
 
           cat feeds.conf.default
@@ -90,15 +119,14 @@ jobs:
           ./scripts/feeds update -a
 
       # ------------------------------------------------------------
-      # Show feed revisions BEFORE installing them
-      # Useful for diagnosing feed compatibility
+      # Show exact feed revisions
       # ------------------------------------------------------------
       - name: Show Feed Revisions
         run: |
           cd openwrt
 
           echo "=========================================="
-          echo "Feed revisions"
+          echo "FEED REVISIONS"
           echo "=========================================="
 
           for feed in feeds/*; do
@@ -119,7 +147,7 @@ jobs:
           ./scripts/feeds install -a
 
       # ------------------------------------------------------------
-      # Configure Flint 4
+      # Generate Flint 4 configuration
       # ------------------------------------------------------------
       - name: Generate Target Configuration
         run: |
@@ -138,7 +166,7 @@ jobs:
           make defconfig
 
       # ------------------------------------------------------------
-      # Show resulting configuration
+      # Show final configuration
       # ------------------------------------------------------------
       - name: Show Final Configuration
         run: |
@@ -173,13 +201,13 @@ jobs:
 
           echo
           echo "=========================================="
-          echo "BRIDGER / OFFLOAD"
+          echo "OFFLOAD / BRIDGER"
           echo "=========================================="
 
           grep -Ei 'bridger|yt922|offload' .config || true
 
       # ------------------------------------------------------------
-      # Download sources
+      # Download source packages
       # ------------------------------------------------------------
       - name: Download Source Packages
         run: |
@@ -190,18 +218,24 @@ jobs:
           find dl -size -1024c -exec rm -f {} \;
 
       # ------------------------------------------------------------
-      # Build firmware
+      # Compile firmware
       # ------------------------------------------------------------
       - name: Compile Firmware
         run: |
           cd openwrt
 
-          echo "Building on $(nproc) cores..."
+          echo "=========================================="
+          echo "BUILD"
+          echo "=========================================="
+
+          echo "CPU cores: $(nproc)"
+          echo "Make version:"
+          make --version | head -1
 
           make -j$(nproc) || make -j1 V=s
 
       # ------------------------------------------------------------
-      # Collect firmware
+      # Prepare firmware artifacts
       # ------------------------------------------------------------
       - name: Prepare Artifacts
         if: success()
@@ -223,13 +257,13 @@ jobs:
 
           echo
           echo "=========================================="
-          echo "Generated firmware"
+          echo "GENERATED FIRMWARE"
           echo "=========================================="
 
           ls -lah ../firmware-out/
 
       # ------------------------------------------------------------
-      # SHA256
+      # Generate SHA256 checksums
       # ------------------------------------------------------------
       - name: Generate Checksums
         if: success()
@@ -243,10 +277,14 @@ jobs:
             2>/dev/null \
             > sha256sums.txt || true
 
+          echo "=========================================="
+          echo "SHA256"
+          echo "=========================================="
+
           cat sha256sums.txt || true
 
       # ------------------------------------------------------------
-      # Upload firmware
+      # Upload firmware artifacts
       # ------------------------------------------------------------
       - name: Upload Firmware Artifacts
         if: success()
