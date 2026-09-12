@@ -1,4 +1,4 @@
-name: Build Flint 4 Firmware
+name: Build Flint 4
 
 on:
   workflow_dispatch:
@@ -8,28 +8,21 @@ permissions:
 
 jobs:
   build:
-    name: Build GL.iNet Flint 4 (GL-BE14000)
+    name: Flint 4 (GL-BE14000)
     runs-on: ubuntu-24.04
     timeout-minutes: 240
 
     steps:
-      - name: Checkout Flint 4 OpenWrt branch
+      - name: Checkout Flint 4 branch
         uses: actions/checkout@v4
         with:
           repository: JiaY-shi/openwrt
           ref: flint4-support-blogic-pr
           fetch-depth: 1
 
-      - name: Show source revision
-        run: |
-          echo "Building Flint 4 OpenWrt"
-          git log -1 --oneline
-          git status --short
-
-      - name: Install build dependencies
+      - name: Install dependencies
         run: |
           sudo apt-get update
-
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
             build-essential \
             clang \
@@ -45,7 +38,6 @@ jobs:
             libdw-dev \
             python3 \
             python3-setuptools \
-            python3-distutils \
             rsync \
             swig \
             unzip \
@@ -62,71 +54,62 @@ jobs:
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
-      - name: Configure Flint 4
+      - name: Select Flint 4 target
         run: |
           cat > .config <<'EOF'
           CONFIG_TARGET_mediatek=y
           CONFIG_TARGET_mediatek_filogic=y
-          CONFIG_TARGET_MULTI_PROFILE=y
           CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_glinet_gl-be14000=y
-          CONFIG_TARGET_DEVICE_PACKAGES_mediatek_filogic_DEVICE_glinet_gl-be14000=""
           EOF
 
           make defconfig
 
-      - name: Verify configuration
+      - name: Show configuration
         run: |
-          echo "Selected target:"
-          grep '^CONFIG_TARGET_mediatek' .config || true
+          echo "=== OpenWrt revision ==="
+          git log -1 --oneline
 
           echo
-          echo "Selected device:"
-          grep 'glinet_gl-be14000' .config || true
+          echo "=== Target ==="
+          grep '^CONFIG_TARGET_' .config | head -50
 
           echo
-          echo "OpenWrt target:"
-          grep '^CONFIG_TARGET_' .config | head -30
+          echo "=== Flint 4 ==="
+          grep -i 'gl-be14000' .config || true
 
       - name: Download sources
         run: |
           make download -j"$(nproc)"
 
-      - name: Remove incomplete downloads
+      - name: Build firmware
         run: |
-          find dl -size -1024c -type f -print -delete || true
-
-      - name: Build Flint 4
-        run: |
-          echo "Building with $(nproc) CPU threads"
-
           make -j"$(nproc)" V=s
 
-      - name: List firmware files
+      - name: Show firmware
         if: success()
         run: |
-          echo "Firmware output:"
-          find bin/targets/mediatek/filogic -maxdepth 2 -type f \
-            \( -name '*.bin' -o -name '*.itb' -o -name '*.gz' -o -name '*.manifest' -o -name '*.json' \) \
+          echo "=== Firmware files ==="
+          find bin/targets/mediatek/filogic -maxdepth 1 -type f \
             -print | sort
 
-      - name: Generate checksums
+      - name: Generate SHA256 checksums
         if: success()
         run: |
           cd bin/targets/mediatek/filogic
 
-          find . -maxdepth 1 -type f \
-            \( -name '*.bin' -o -name '*.itb' -o -name '*.gz' \) \
-            -print0 |
-            sort -z |
-            xargs -0 sha256sum > sha256sums.txt
+          sha256sum \
+            *.bin \
+            *.itb \
+            *.gz \
+            2>/dev/null > sha256sums.txt || true
 
           cat sha256sums.txt
 
-      - name: Upload Flint 4 firmware
+      - name: Upload firmware
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: flint4-gl-be14000-firmware
+          name: flint4-gl-be14000
           path: |
             bin/targets/mediatek/filogic/*.bin
             bin/targets/mediatek/filogic/*.itb
