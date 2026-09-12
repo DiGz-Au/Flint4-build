@@ -1,55 +1,138 @@
-name: Build Flint 4 BE14000
+name: Build Flint 4 Firmware
 
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    name: Build GL.iNet Flint 4 (GL-BE14000)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+
     steps:
-      - name: Checkout Repository Branch
+      - name: Checkout Flint 4 OpenWrt branch
         uses: actions/checkout@v4
         with:
           repository: JiaY-shi/openwrt
           ref: flint4-support-blogic-pr
+          fetch-depth: 1
 
-      - name: Install Build Dependencies
+      - name: Show source revision
+        run: |
+          echo "Building Flint 4 OpenWrt"
+          git log -1 --oneline
+          git status --short
+
+      - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential clang flex bison g++ gawk gcc-multilib g++-multilib gettext git libncurses-dev libssl-dev python3-distutils rsync unzip zlib1g-dev file wget
 
-      - name: Update and Install Feeds
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            build-essential \
+            clang \
+            flex \
+            bison \
+            g++ \
+            gawk \
+            gettext \
+            git \
+            libncurses-dev \
+            libssl-dev \
+            libelf-dev \
+            libdw-dev \
+            python3 \
+            python3-setuptools \
+            python3-distutils \
+            rsync \
+            swig \
+            unzip \
+            zlib1g-dev \
+            file \
+            wget \
+            curl \
+            ccache \
+            device-tree-compiler \
+            qemu-utils
+
+      - name: Update feeds
         run: |
           ./scripts/feeds update -a
           ./scripts/feeds install -a
-          find . -name "*librespeed*" -exec rm -rf {} +
 
-      - name: Configure Target
+      - name: Configure Flint 4
         run: |
+          cat > .config <<'EOF'
+          CONFIG_TARGET_mediatek=y
+          CONFIG_TARGET_mediatek_filogic=y
+          CONFIG_TARGET_MULTI_PROFILE=y
+          CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_glinet_gl-be14000=y
+          CONFIG_TARGET_DEVICE_PACKAGES_mediatek_filogic_DEVICE_glinet_gl-be14000=""
+          EOF
+
           make defconfig
-          echo "CONFIG_TARGET_mediatek=y" >> .config
-          echo "CONFIG_TARGET_mediatek_filogic=y" >> .config
-          echo "CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_glinet_gl-be14000=y" >> .config
-          make olddefconfig
-        env:
-          DEBIAN_FRONTEND: noninteractive
 
-      - name: Apply Touchscreen DTS Fix
+      - name: Verify configuration
         run: |
-          DTS_FILE="target/linux/mediatek/dts/mt7988a-glinet-gl-be14000.dts"
-          if [ -f "$DTS_FILE" ]; then
-            sed -i 's/touchscreen-swapped-x-y;/touchscreen-swapped-x-y;\n\t\t\ttouchscreen-inverted-x;\n\t\t\ttouchscreen-inverted-y;/g' "$DTS_FILE"
-            echo "Successfully patched touchscreen inversion in DTS."
-          else
-            echo "DTS file not found, skipping patch."
-          fi
+          echo "Selected target:"
+          grep '^CONFIG_TARGET_mediatek' .config || true
 
-      - name: Compile Firmware
+          echo
+          echo "Selected device:"
+          grep 'glinet_gl-be14000' .config || true
+
+          echo
+          echo "OpenWrt target:"
+          grep '^CONFIG_TARGET_' .config | head -30
+
+      - name: Download sources
         run: |
-          make -j$(nproc)
+          make download -j"$(nproc)"
 
-      - name: Upload Firmware Artifacts
+      - name: Remove incomplete downloads
+        run: |
+          find dl -size -1024c -type f -print -delete || true
+
+      - name: Build Flint 4
+        run: |
+          echo "Building with $(nproc) CPU threads"
+
+          make -j"$(nproc)" V=s
+
+      - name: List firmware files
+        if: success()
+        run: |
+          echo "Firmware output:"
+          find bin/targets/mediatek/filogic -maxdepth 2 -type f \
+            \( -name '*.bin' -o -name '*.itb' -o -name '*.gz' -o -name '*.manifest' -o -name '*.json' \) \
+            -print | sort
+
+      - name: Generate checksums
+        if: success()
+        run: |
+          cd bin/targets/mediatek/filogic
+
+          find . -maxdepth 1 -type f \
+            \( -name '*.bin' -o -name '*.itb' -o -name '*.gz' \) \
+            -print0 |
+            sort -z |
+            xargs -0 sha256sum > sha256sums.txt
+
+          cat sha256sums.txt
+
+      - name: Upload Flint 4 firmware
+        if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: flint4-be14000-firmware
-          path: bin/targets/mediatek/filogic/*
+          name: flint4-gl-be14000-firmware
+          path: |
+            bin/targets/mediatek/filogic/*.bin
+            bin/targets/mediatek/filogic/*.itb
+            bin/targets/mediatek/filogic/*.gz
+            bin/targets/mediatek/filogic/*.manifest
+            bin/targets/mediatek/filogic/*.json
+            bin/targets/mediatek/filogic/sha256sums.txt
+          if-no-files-found: error
+          retention-days: 30
