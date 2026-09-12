@@ -24,14 +24,11 @@ jobs:
           ./scripts/feeds install -a
           find . -name "*librespeed*" -exec rm -rf {} +
 
-      - name: Configure Target with Seed
+      - name: Configure Target
         run: |
-          if [ -f "config.seed" ]; then
-            cp config.seed .config
-          else
-            echo "CONFIG_TARGET_mediatek=y" > .config
-            echo "CONFIG_TARGET_mediatek_filogic=y" >> .config
-          fi
+          echo "CONFIG_TARGET_mediatek=y" > .config
+          echo "CONFIG_TARGET_mediatek_filogic=y" >> .config
+          echo "CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_glinet_gl-be14000=y" >> .config
           make olddefconfig
         env:
           DEBIAN_FRONTEND: noninteractive
