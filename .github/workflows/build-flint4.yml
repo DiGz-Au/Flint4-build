@@ -24,14 +24,27 @@ jobs:
           ./scripts/feeds install -a
           find . -name "*librespeed*" -exec rm -rf {} +
 
-      - name: Configure Target for GL-BE14000
+      - name: Configure Target with Seed
         run: |
-          echo "CONFIG_TARGET_mediatek=y" > .config
-          echo "CONFIG_TARGET_mediatek_filogic=y" >> .config
-          echo "CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_glinet_gl-be14000=y" >> .config
-          make defconfig
+          if [ -f "config.seed" ]; then
+            cp config.seed .config
+          else
+            echo "CONFIG_TARGET_mediatek=y" > .config
+            echo "CONFIG_TARGET_mediatek_filogic=y" >> .config
+          fi
+          make olddefconfig
         env:
           DEBIAN_FRONTEND: noninteractive
+
+      - name: Apply Touchscreen DTS Fix
+        run: |
+          DTS_FILE="target/linux/mediatek/dts/mt7988a-glinet-gl-be14000.dts"
+          if [ -f "$DTS_FILE" ]; then
+            sed -i 's/touchscreen-swapped-x-y;/touchscreen-swapped-x-y;\n\t\t\ttouchscreen-inverted-x;\n\t\t\ttouchscreen-inverted-y;/g' "$DTS_FILE"
+            echo "Successfully patched touchscreen inversion in DTS."
+          else
+            echo "DTS file not found, skipping patch."
+          fi
 
       - name: Compile Firmware
         run: |
