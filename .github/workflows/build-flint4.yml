@@ -381,4 +381,3 @@ jobs:
         with:
           name: Flint4-GL-BE14000-OpenWrt-PanelUI-YT9224
           path: firmware-out
-```
