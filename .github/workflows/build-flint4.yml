@@ -1,4 +1,3 @@
-```yaml
 name: Build Flint 4 Firmware - Panel UI + YT9224
 
 on:
