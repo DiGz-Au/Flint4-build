@@ -113,6 +113,25 @@ jobs:
           done
 
       # ============================================================
+      # Configure Git identity
+      #
+      # Required because cherry-pick --continue creates commits.
+      # ============================================================
+      - name: Configure Git Identity
+        run: |
+          cd openwrt
+
+          git config user.name "Flint 4 Build Bot"
+          git config user.email "actions@github.com"
+
+          echo "========================================"
+          echo "GIT IDENTITY"
+          echo "========================================"
+
+          git config user.name
+          git config user.email
+
+      # ============================================================
       # Cherry-pick all 19 commits
       #
       # Commit #1 has a known conflict because flint4-support
@@ -200,7 +219,9 @@ jobs:
               echo "Resolved known conflict."
               echo "Continuing cherry-pick..."
 
-              git cherry-pick --continue
+              git -c user.name="Flint 4 Build Bot" \
+                  -c user.email="actions@github.com" \
+                  cherry-pick --continue
 
               continue
             fi
@@ -257,8 +278,7 @@ jobs:
       # ============================================================
       # Generate Target Configuration
       #
-      # IMPORTANT:
-      # These are the known-good Flint 4 target symbols.
+      # Keep the known-good Flint 4 target symbols.
       # ============================================================
       - name: Generate Target Configuration
         run: |
@@ -377,7 +397,7 @@ jobs:
       # Upload Firmware
       # ============================================================
       - name: Upload Firmware Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: Flint4-GL-BE14000-OpenWrt-PanelUI-YT9224
-          path: firmware-out
+      uses: actions/upload-artifact@v4
+      with:
+        name: Flint4-GL-BE14000-OpenWrt-PanelUI-YT9224
+        path: firmware-out
