@@ -10,6 +10,9 @@ jobs:
 
     steps:
 
+      # ============================================================
+      # Maximize Build Space
+      # ============================================================
       - name: Maximize Build Space
         uses: easimon/maximize-build-space@v10
         with:
@@ -21,9 +24,13 @@ jobs:
           remove-codeql: 'true'
           remove-docker-images: 'true'
 
+      # ============================================================
+      # Install Build Dependencies
+      # ============================================================
       - name: Install Build Dependencies
         run: |
           sudo apt-get update
+
           sudo apt-get install -y \
             build-essential \
             clang \
@@ -44,6 +51,9 @@ jobs:
             wget \
             device-tree-compiler
 
+      # ============================================================
+      # Checkout Known-Good Flint 4 Branch
+      # ============================================================
       - name: Checkout Known-Good Flint 4 Branch
         run: |
           git clone \
@@ -60,6 +70,9 @@ jobs:
 
           git log -1 --oneline
 
+      # ============================================================
+      # Fetch All 19 YT9224 PR Commits
+      # ============================================================
       - name: Fetch YT9224 PR Commits
         run: |
           cd openwrt
@@ -99,6 +112,9 @@ jobs:
             git fetch --no-tags "$BLOGIC_REPO" "$commit"
           done
 
+      # ============================================================
+      # Configure Git Identity
+      # ============================================================
       - name: Configure Git Identity
         run: |
           cd openwrt
@@ -113,8 +129,275 @@ jobs:
           git config user.name
           git config user.email
 
+      # ============================================================
+      # Cherry-pick Complete YT9224 PR
+      # ============================================================
       - name: Cherry-pick Complete YT9224 PR
         run: |
           cd openwrt
 
           COMMITS=(
+            d4d71d8c55cd49389c769236b07441adbd58e370
+            6b300b532bf58bb0251905a09bffe1788322f435
+            e2df5a1c436da057821b52b958df6c4fd73a9d10
+            62707ad6a242dcdb6c3059e3811b6bdd3308bfd0
+            da6ee10f4aa054e7d396e130cdd4405c43480bbc
+            55f15d88b6dc68965eec7ea893dc0db21b659c73
+            ed84b0aacfcb8bc62f435ba47cf5f523205eb3b8
+            35ada6b9f41cebd1a98e83e4b99cfb71fedb64e9
+            b1e81abd32ed4369fc1d413b5c33b6ce8ca5a3eb
+            57c66e245ea735554d864b269726c14e3120c72a
+            014ad5d2682906e4ae6fcce7bb196192529a9594
+            dfa73b346fb74027ff017de239f9d03002ad128a
+            b87cffe24d576fe49c940239c2d3d89a00a68c3d
+            ee4cd1f8ea93bfa5af75344685febad00fe819ba
+            0c853dd139ef120c13402c2c7f13d927722d61ef
+            7289ad3424945127eacfd6a2016cd0c1fd3de61d
+            8afac3fd27f032563cd601633b0f646cf7cff11c
+            965af1a746277d281d8f0277de32d4ad73152c6d
+            8fe7ba853d28cbb9f8a9e104d3fcde960fd96dae
+          )
+
+          echo
+          echo "========================================"
+          echo "CHERRY-PICKING 19 YT9224 COMMITS"
+          echo "========================================"
+
+          for commit in "${COMMITS[@]}"; do
+
+            echo
+            echo "----------------------------------------"
+            echo "Cherry-picking:"
+            git show -s --format='%H %s' "$commit"
+            echo "----------------------------------------"
+
+            if git cherry-pick "$commit"; then
+              echo "Cherry-pick successful."
+              continue
+            fi
+
+            # ------------------------------------------------------
+            # Handle an empty cherry-pick.
+            #
+            # flint4-support may already contain some later PR
+            # commits. In that case cherry-pick reports:
+            # "The previous cherry-pick is now empty"
+            #
+            # Skip ONLY an actually empty cherry-pick.
+            # ------------------------------------------------------
+            if git diff --quiet && \
+               git diff --cached --quiet && \
+               git status --porcelain | grep -q "^"; then
+
+              echo "Cherry-pick produced an empty commit."
+              echo "Checking whether Git is waiting for an empty cherry-pick."
+
+              if git status | grep -q "cherry-pick"; then
+                echo "Commit already present. Skipping it."
+                git cherry-pick --skip
+                continue
+              fi
+            fi
+
+            # ------------------------------------------------------
+            # Known conflict in commit #1.
+            #
+            # flint4-support already contains the preliminary YT922x
+            # implementation. Commit #1 replaces it with the complete
+            # YT9224 implementation.
+            # ------------------------------------------------------
+            if [ "$commit" = "d4d71d8c55cd49389c769236b07441adbd58e370" ] && \
+               git status --short | grep -q \
+               "target/linux/mediatek/patches-6.18/967-27-net-dsa-yt92xx-Add-support-for-Motorcomm-YT922x.patch"; then
+
+              echo
+              echo "Known YT922x/YT9224 patch conflict detected."
+              echo "Taking the complete YT9224 version from d4d71d8."
+
+              git checkout --theirs \
+                target/linux/mediatek/patches-6.18/967-27-net-dsa-yt92xx-Add-support-for-Motorcomm-YT922x.patch
+
+              git add \
+                target/linux/mediatek/patches-6.18/967-27-net-dsa-yt92xx-Add-support-for-Motorcomm-YT922x.patch
+
+              echo
+              echo "Resolved known conflict."
+              echo "Continuing cherry-pick..."
+
+              git -c user.name="Flint 4 Build Bot" \
+                  -c user.email="actions@github.com" \
+                  cherry-pick --continue
+
+              continue
+            fi
+
+            # ------------------------------------------------------
+            # Any other conflict is unexpected.
+            # STOP rather than blindly resolving it.
+            # ------------------------------------------------------
+            echo
+            echo "========================================"
+            echo "UNEXPECTED CHERRY-PICK CONFLICT"
+            echo "========================================"
+
+            git status
+            git diff --check || true
+
+            echo
+            echo "The workflow will stop here."
+            echo "The conflict needs to be reviewed rather than"
+            echo "silently choosing a side."
+
+            exit 1
+
+          done
+
+          echo
+          echo "========================================"
+          echo "ALL 19 COMMITS APPLIED"
+          echo "========================================"
+
+          git status
+
+          echo
+          echo "========================================"
+          echo "FINAL HISTORY"
+          echo "========================================"
+
+          git log -20 --oneline
+
+      # ============================================================
+      # Add Blogic Panel UI Feed
+      # ============================================================
+      - name: Add Blogic Panel Feed
+        run: |
+          cd openwrt
+
+          echo "src-git blogic https://github.com/blogic/feed-blogic.git" \
+            >> feeds.conf.default
+
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      # ============================================================
+      # Generate Target Configuration
+      # ============================================================
+      - name: Generate Target Configuration
+        run: |
+          cd openwrt
+
+          cat << 'EOF' > .config
+          CONFIG_TARGET_mediatek=y
+          CONFIG_TARGET_mediatek_filogic=y
+          CONFIG_TARGET_MULTI_PROFILE=y
+          CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_glinet_gl-be14000=y
+
+          CONFIG_PACKAGE_luci=y
+          CONFIG_PACKAGE_luci-ssl=y
+
+          CONFIG_PACKAGE_glinet-panel-ui=y
+          CONFIG_PACKAGE_ucode-mod-lvgl=y
+          EOF
+
+          make defconfig
+
+      # ============================================================
+      # Verify Flint 4 Configuration
+      # ============================================================
+      - name: Verify Flint 4 Configuration
+        run: |
+          cd openwrt
+
+          echo "========================================"
+          echo "TARGET"
+          echo "========================================"
+
+          grep -E \
+            'CONFIG_TARGET_mediatek|CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_glinet_gl-be14000' \
+            .config || true
+
+          echo
+          echo "========================================"
+          echo "PANEL UI"
+          echo "========================================"
+
+          grep -E \
+            'CONFIG_PACKAGE_(glinet-panel-ui|ucode-mod-lvgl|lvgl)' \
+            .config || true
+
+          echo
+          echo "========================================"
+          echo "YT922x / YT8824 / BRIDGER / WED"
+          echo "========================================"
+
+          grep -Ei \
+            'yt922|yt921|yt8824|bridger|ppe|wed|mt7996' \
+            .config || true
+
+          echo
+          echo "========================================"
+          echo "BE14000 DTS"
+          echo "========================================"
+
+          grep -A15 -B5 "touchscreen@58" \
+            target/linux/mediatek/dts/mt7988a-glinet_gl-be14000.dts || true
+
+      # ============================================================
+      # Download Source Packages
+      # ============================================================
+      - name: Download Source Packages
+        run: |
+          cd openwrt
+
+          make download -j$(nproc)
+
+          find dl -size -1024c -exec rm -f {} \;
+
+      # ============================================================
+      # Compile Firmware
+      # ============================================================
+      - name: Compile Firmware
+        run: |
+          cd openwrt
+
+          echo "========================================"
+          echo "BUILDING FLINT 4"
+          echo "========================================"
+
+          echo "Building on $(nproc) cores..."
+
+          make -j$(nproc) || make -j1 V=s
+
+      # ============================================================
+      # Prepare Artifacts
+      # ============================================================
+      - name: Prepare Artifacts
+        run: |
+          cd openwrt
+
+          mkdir -p ../firmware-out
+
+          find bin/targets/mediatek/filogic/ \
+            -type f \
+            \( \
+              -name "*.bin" \
+              -o -name "*.img" \
+              -o -name "*.manifest" \
+            \) \
+            -exec cp {} ../firmware-out/ \;
+
+          echo
+          echo "========================================"
+          echo "BUILD ARTIFACTS"
+          echo "========================================"
+
+          ls -lah ../firmware-out
+
+      # ============================================================
+      # Upload Firmware
+      # ============================================================
+      - name: Upload Firmware Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Flint4-GL-BE14000-OpenWrt-PanelUI-YT9224
+          path: firmware-out
