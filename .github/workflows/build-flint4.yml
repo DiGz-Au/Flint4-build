@@ -1,11 +1,12 @@
-name: Build Flint 4 Firmware - Panel UI
+```yaml
+name: Build Flint 4 Firmware - Panel UI + YT9224
 
 on:
   workflow_dispatch:
 
 jobs:
   build:
-    name: Build GL-BE14000 OpenWrt with Panel UI
+    name: Build GL-BE14000 OpenWrt with Panel UI + YT9224
     runs-on: ubuntu-22.04
 
     steps:
@@ -52,13 +53,117 @@ jobs:
       # ============================================================
       # Checkout the known-good Flint 4 branch
       # ============================================================
-      - name: Checkout Repository
+      - name: Checkout Known-Good Flint 4 Branch
         run: |
           git clone \
             --depth 1 \
             -b flint4-support \
             https://github.com/JiaY-shi/openwrt.git \
             openwrt
+
+          cd openwrt
+
+          echo "========================================"
+          echo "BASELINE"
+          echo "========================================"
+
+          git log -1 --oneline
+
+      # ============================================================
+      # Fetch the 19 Blogic YT9224 / BE14000 commits
+      #
+      # These are fetched explicitly because the checkout above
+      # intentionally uses a shallow clone.
+      # ============================================================
+      - name: Fetch YT9224 PR Commits
+        run: |
+          cd openwrt
+
+          BLOGIC_REPO="https://github.com/blogic/openwrt.git"
+
+          COMMITS=(
+            d4d71d8c55cd49389c769236b07441adbd58e370
+            6b300b532bf58bb0251905a09bffe1788322f435
+            e2df5a1c436da057821b52b958df6c4fd73a9d10
+            62707ad6a242dcdb6c3059e3811b6bdd3308bfd0
+            da6ee10f4aa054e7d396e130cdd4405c43480bbc
+            55f15d88b6dc68965eec7ea893dc0db21b659c73
+            ed84b0aacfcb8bc62f435ba47cf5f523205eb3b8
+            35ada6b9f41cebd1a98e83e4b99cfb71fedb64e9
+            b1e81abd32ed4369fc1d413b5c33b6ce8ca5a3eb
+            57c66e245ea735554d864b269726c14e3120c72a
+            014ad5d2682906e4ae6fcce7bb196192529a9594
+            dfa73b346fb74027ff017de239f9d03002ad128a
+            b87cffe24d576fe49c940239c2d3d89a00a68c3d
+            ee4cd1f8ea93bfa5af75344685febad00fe819ba
+            0c853dd139ef120c13402c2c7f13d927722d61ef
+            7289ad3424945127eacfd6a2016cd0c1fd3de61d
+            8afac3fd27f032563cd601633b0f646cf7cff11c
+            965af1a746277d281d8f0277de32d4ad73152c6d
+            8fe7ba853d28cbb9f8a9e104d3fcde960fd96dae
+          )
+
+          echo "Fetching ${#COMMITS[@]} commits..."
+
+          for commit in "${COMMITS[@]}"; do
+            echo
+            echo "Fetching $commit"
+            git fetch --no-tags "$BLOGIC_REPO" "$commit"
+          done
+
+      # ============================================================
+      # Cherry-pick all 19 commits
+      #
+      # IMPORTANT:
+      # Commits are applied in the exact order of the PR.
+      # ============================================================
+      - name: Cherry-pick Complete YT9224 PR
+        run: |
+          cd openwrt
+
+          COMMITS=(
+            d4d71d8c55cd49389c769236b07441adbd58e370
+            6b300b532bf58bb0251905a09bffe1788322f435
+            e2df5a1c436da057821b52b958df6c4fd73a9d10
+            62707ad6a242dcdb6c3059e3811b6bdd3308bfd0
+            da6ee10f4aa054e7d396e130cdd4405c43480bbc
+            55f15d88b6dc68965eec7ea893dc0db21b659c73
+            ed84b0aacfcb8bc62f435ba47cf5f523205eb3b8
+            35ada6b9f41cebd1a98e83e4b99cfb71fedb64e9
+            b1e81abd32ed4369fc1d413b5c33b6ce8ca5a3eb
+            57c66e245ea735554d864b269726c14e3120c72a
+            014ad5d2682906e4ae6fcce7bb196192529a9594
+            dfa73b346fb74027ff017de239f9d03002ad128a
+            b87cffe24d576fe49c940239c2d3d89a00a68c3d
+            ee4cd1f8ea93bfa5af75344685febad00fe819ba
+            0c853dd139ef120c13402c2c7f13d927722d61ef
+            7289ad3424945127eacfd6a2016cd0c1fd3de61d
+            8afac3fd27f032563cd601633b0f646cf7cff11c
+            965af1a746277d281d8f0277de32d4ad73152c6d
+            8fe7ba853d28cbb9f8a9e104d3fcde960fd96dae
+          )
+
+          echo
+          echo "========================================"
+          echo "CHERRY-PICKING 19 YT9224 COMMITS"
+          echo "========================================"
+
+          for commit in "${COMMITS[@]}"; do
+            echo
+            echo "----------------------------------------"
+            echo "Cherry-picking:"
+            git show -s --format='%H %s' "$commit"
+            echo "----------------------------------------"
+
+            git cherry-pick "$commit"
+          done
+
+          echo
+          echo "========================================"
+          echo "FINAL COMMIT"
+          echo "========================================"
+
+          git log -20 --oneline
 
       # ============================================================
       # Add Blogic Panel UI Feed
@@ -74,73 +179,13 @@ jobs:
           ./scripts/feeds install -a
 
       # ============================================================
-      # Fix BE14000 Touchscreen Rotation
-      #
-      # Existing DTS already has:
-      #   touchscreen-swapped-x-y;
-      #
-      # The production BE14000 panel is mounted 180 degrees
-      # around, so also invert both axes.
-      # ============================================================
-      - name: Fix BE14000 Touchscreen Rotation
-        run: |
-          cd openwrt
-
-          python3 <<'PY'
-          from pathlib import Path
-
-          p = Path(
-              "target/linux/mediatek/dts/"
-              "mt7988a-glinet-gl-be14000.dts"
-          )
-
-          if not p.exists():
-              raise SystemExit(
-                  f"ERROR: BE14000 DTS not found: {p}"
-              )
-
-          s = p.read_text()
-
-          # Already fixed?
-          if (
-              "touchscreen-swapped-x-y;" in s
-              and "touchscreen-inverted-x;" in s
-              and "touchscreen-inverted-y;" in s
-          ):
-              print("Touchscreen rotation fix already present.")
-              raise SystemExit(0)
-
-          old = "touchscreen-swapped-x-y;"
-
-          new = """touchscreen-swapped-x-y;
-                  touchscreen-inverted-x;
-                  touchscreen-inverted-y;"""
-
-          if old not in s:
-              raise SystemExit(
-                  "ERROR: touchscreen-swapped-x-y was not found "
-                  "in the BE14000 DTS."
-              )
-
-          s = s.replace(old, new, 1)
-
-          p.write_text(s)
-
-          print("Applied BE14000 180-degree touchscreen fix.")
-          PY
-
-          echo
-          echo "===== Touchscreen DTS ====="
-
-          grep -A12 -B4 "touchscreen@58" \
-            target/linux/mediatek/dts/mt7988a-glinet-gl-be14000.dts
-
-      # ============================================================
       # Generate Target Configuration
       #
       # IMPORTANT:
-      # This is kept EXACTLY based on the known-good Flint 4
-      # configuration you supplied.
+      # Keep the known-good Flint 4 target symbols.
+      #
+      # The YT9224 PR itself supplies the required Ethernet,
+      # switch, PPE, bridger, PHY and WED configuration changes.
       # ============================================================
       - name: Generate Target Configuration
         run: |
@@ -164,7 +209,7 @@ jobs:
           make defconfig
 
       # ============================================================
-      # Show Important Configuration
+      # Verify Flint 4 Configuration
       # ============================================================
       - name: Verify Flint 4 Configuration
         run: |
@@ -189,11 +234,20 @@ jobs:
 
           echo
           echo "========================================"
-          echo "TOUCHSCREEN"
+          echo "YT922x / YT8824 / PPE / BRIDGER"
           echo "========================================"
 
-          grep -A10 -B3 "touchscreen@58" \
-            target/linux/mediatek/dts/mt7988a-glinet-gl-be14000.dts || true
+          grep -Ei \
+            'yt922|yt921|yt8824|bridger|ppe|wed|mt7996' \
+            .config || true
+
+          echo
+          echo "========================================"
+          echo "BE14000 DTS"
+          echo "========================================"
+
+          grep -A15 -B5 "touchscreen@58" \
+            target/linux/mediatek/dts/mt7988a-glinet_gl-be14000.dts || true
 
       # ============================================================
       # Download Source Packages
@@ -212,6 +266,10 @@ jobs:
       - name: Compile Firmware
         run: |
           cd openwrt
+
+          echo "========================================"
+          echo "BUILDING FLINT 4"
+          echo "========================================"
 
           echo "Building on $(nproc) cores..."
 
@@ -248,5 +306,5 @@ jobs:
       - name: Upload Firmware Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Flint4-GL-BE14000-OpenWrt-PanelUI
+          name: Flint4-GL-BE14000-OpenWrt-PanelUI-YT9224
           path: firmware-out
