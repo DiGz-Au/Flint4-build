@@ -1,11 +1,11 @@
-name: Build Flint 4 Firmware - Panel UI + YT9224
+name: Build Flint 4 Firmware - Panel UI + YT9224 + SQM
 
 on:
   workflow_dispatch:
 
 jobs:
   build:
-    name: Build GL-BE14000 OpenWrt with Panel UI + YT9224
+    name: Build GL-BE14000 OpenWrt with Panel UI + YT9224 + SQM
     runs-on: ubuntu-22.04
 
     steps:
@@ -24,12 +24,29 @@ jobs:
           remove-docker-images: 'true'
 
       # ============================================================
+      # Free Runner Space
+      # ============================================================
+      - name: Free Runner Space
+        run: |
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo rm -rf /usr/local/share/boost
+          sudo rm -rf /usr/local/.ghcup
+          sudo rm -rf /opt/microsoft
+          sudo docker system prune -af || true
+          sudo apt-get clean
+          sudo rm -rf /var/lib/apt/lists/*
+          df -h
+
+      # ============================================================
       # Build Dependencies
       # ============================================================
       - name: Install Build Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
+          sudo apt-get install -y --no-install-recommends \
             build-essential \
             clang \
             flex \
@@ -48,6 +65,10 @@ jobs:
             file \
             wget \
             device-tree-compiler
+
+          sudo apt-get clean
+          sudo rm -rf /var/lib/apt/lists/*
+          df -h
 
       # ============================================================
       # Checkout the known-good Flint 4 branch
@@ -247,6 +268,13 @@ jobs:
           # GL.iNet front-panel UI
           CONFIG_PACKAGE_glinet-panel-ui=y
           CONFIG_PACKAGE_ucode-mod-lvgl=y
+
+          # SQM / CAKE
+          CONFIG_PACKAGE_luci-app-sqm=y
+          CONFIG_PACKAGE_sqm-scripts=y
+          CONFIG_PACKAGE_kmod-ifb=y
+          CONFIG_PACKAGE_kmod-sched-cake=y
+          CONFIG_PACKAGE_ip-full=y
           EOF_CONFIG
 
           make defconfig
@@ -347,5 +375,5 @@ jobs:
       - name: Upload Firmware Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Flint4-GL-BE14000-OpenWrt-PanelUI-YT9224
+          name: Flint4-GL-BE14000-OpenWrt-PanelUI-YT9224-SQM
           path: firmware-out
