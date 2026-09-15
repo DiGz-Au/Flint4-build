@@ -1,23 +1,31 @@
-name: Build Flint 4 Firmware
+name: Build Flint 4 Firmware - Panel UI + RTL8261C + Production DT
 
 on:
   workflow_dispatch:
 
 jobs:
   build:
-    name: Build GL-BE14000 OpenWrt
+    name: Build GL-BE14000 OpenWrt with Panel UI + Driver Fixes
     runs-on: ubuntu-22.04
 
     steps:
-      - name: Free Runner Disk Space
-        run: |
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /opt/ghc
-          sudo rm -rf /usr/local/share/boost
-          sudo docker image prune --all --force
-          sudo apt-get clean
+      # ============================================================
+      # Maximize Build Space
+      # ============================================================
+      - name: Maximize Build Space
+        uses: easimon/maximize-build-space@v10
+        with:
+          root-reserve-mb: 1024
+          swap-size-mb: 1024
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          remove-codeql: 'true'
+          remove-docker-images: 'true'
 
+      # ============================================================
+      # Build Dependencies
+      # ============================================================
       - name: Install Build Dependencies
         run: |
           sudo apt-get update
@@ -31,116 +39,294 @@ jobs:
             g++-multilib \
             gettext \
             git \
-            libncurses-dev \
+            libncurses5-dev \
             libssl-dev \
-            python3-setuptools \
+            python3-distutils \
             rsync \
-            swig \
             unzip \
             zlib1g-dev \
             file \
             wget \
             device-tree-compiler
 
-      - name: Checkout Flint 4 Blogic PR
+      # ============================================================
+      # Checkout the known-good Flint 4 branch
+      # ============================================================
+      - name: Checkout Repository
         run: |
-          git clone --depth 1 \
-            -b flint4-support-blogic-pr \
+          git clone \
+            --depth 1 \
+            -b flint4-support \
             https://github.com/JiaY-shi/openwrt.git \
             openwrt
 
-      - name: Add Blogic Panel UI Feed
-        working-directory: openwrt
-        run: |
-          echo "src-git blogic https://github.com/blogic/feed-blogic.git" >> feeds.conf.default
-          ./scripts/feeds update -a
-          ./scripts/feeds install -a
+          cd openwrt
 
-      - name: Disable LibreSpeed packages
-        working-directory: openwrt
-        run: |
-          rm -f package/feeds/packages/librespeed-cli/Makefile
-          rm -f package/feeds/packages/librespeed-cli-rust/Makefile
-          rm -f package/feeds/packages/librespeed-common/Makefile
-          rm -f package/feeds/luci/luci-app-librespeed/Makefile
-
-      - name: Generate Target Configuration
-        working-directory: openwrt
-        env:
-          TERM: xterm
-          NONINTERACTIVE: "1"
-          DEBIAN_FRONTEND: noninteractive
-        run: |
-          cat << 'EOF' > .config
-          CONFIG_TARGET_mediatek=y
-          CONFIG_TARGET_mediatek_mt7988=y
-          CONFIG_TARGET_mediatek_mt7988_DEVICE_glinet_gl-be14000=y
-
-          # Flint 4 front-panel UI
-          CONFIG_PACKAGE_glinet-panel-ui=y
-          EOF
-
-          make defconfig
-
-      - name: Verify Configuration
-        working-directory: openwrt
-        run: |
           echo "========================================"
-          echo "Git revision"
+          echo "BASELINE"
           echo "========================================"
           git log -1 --oneline
 
-          echo
+      # ============================================================
+      # Apply only the two fixes missing from flint4-support
+      #   965af1a - RTL8261C firmware probe fix
+      #   8fe7ba8 - production GL-BE14000 DT (2 GiB + touch rotation)
+      # ============================================================
+      - name: Apply RTL8261C and Production DT Fixes
+        run: |
+          set -euo pipefail
+          cd openwrt
+
+          git config user.name "Flint 4 Build Bot"
+          git config user.email "actions@github.com"
+
+          BLOGIC_REPO="https://github.com/blogic/openwrt.git"
+          RTL8261C_COMMIT="965af1a746277d281d8f0277de32d4ad73152c6d"
+          PRODUCTION_DT_COMMIT="8fe7ba853d28cbb9f8a9e104d3fcde960fd96dae"
+
           echo "========================================"
-          echo "Target"
+          echo "FETCHING FIX COMMITS"
           echo "========================================"
-          grep -E \
-            'CONFIG_TARGET_mediatek_mt7988|CONFIG_TARGET_mediatek_mt7988_DEVICE_glinet_gl-be14000' \
-            .config
+
+          git fetch --no-tags "$BLOGIC_REPO" "$RTL8261C_COMMIT"
+          git fetch --no-tags "$BLOGIC_REPO" "$PRODUCTION_DT_COMMIT"
 
           echo
           echo "========================================"
-          echo "Panel / Touch / UI"
+          echo "RTL8261C FIRMWARE PROBE FIX"
           echo "========================================"
+
+          RTL_PATCH="target/linux/generic/pending-6.18/744-net-phy-realtek-fix-RTL8261C-firmware-probe.patch"
+
+          if [ -f "$RTL_PATCH" ]; then
+            echo "RTL8261C probe patch is already present; skipping commit."
+          else
+            git show -s --format='%H %s' "$RTL8261C_COMMIT"
+            git cherry-pick "$RTL8261C_COMMIT"
+          fi
+
+          echo
+          echo "========================================"
+          echo "GL-BE14000 PRODUCTION DT FIX"
+          echo "========================================"
+
+          DTS="target/linux/mediatek/dts/mt7988a-glinet-gl-be14000.dts"
+
+          if grep -Fq 'reg = <0x0 0x40000000 0x0 0x80000000>;' "$DTS" && \
+             grep -Fq 'touchscreen-inverted-x;' "$DTS" && \
+             grep -Fq 'touchscreen-inverted-y;' "$DTS"; then
+            echo "Production DT fix is already present; skipping commit."
+          else
+            git show -s --format='%H %s' "$PRODUCTION_DT_COMMIT"
+            git cherry-pick "$PRODUCTION_DT_COMMIT"
+          fi
+
+          echo
+          echo "========================================"
+          echo "VERIFY APPLIED FIXES"
+          echo "========================================"
+
+          test -f "$RTL_PATCH"
+          grep -F 'reg = <0x0 0x40000000 0x0 0x80000000>;' "$DTS"
+          grep -F 'touchscreen-swapped-x-y;' "$DTS"
+          grep -F 'touchscreen-inverted-x;' "$DTS"
+          grep -F 'touchscreen-inverted-y;' "$DTS"
+
+          echo
+          echo "========================================"
+          echo "FINAL PATCHED HISTORY"
+          echo "========================================"
+          git log -5 --oneline
+
+      # ============================================================
+      # Add Blogic Panel UI Feed
+      # ============================================================
+      - name: Add Blogic Panel Feed
+        run: |
+          cd openwrt
+
+          echo "src-git blogic https://github.com/blogic/feed-blogic.git" \
+            >> feeds.conf.default
+
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      # ============================================================
+      # Fix BE14000 Touchscreen Rotation
+      #
+      # The production DT commit above should already add both
+      # inversions. Keep this known-good step as a safety check.
+      # ============================================================
+      - name: Fix BE14000 Touchscreen Rotation
+        run: |
+          cd openwrt
+
+          python3 <<'PY'
+          from pathlib import Path
+
+          p = Path(
+              "target/linux/mediatek/dts/"
+              "mt7988a-glinet-gl-be14000.dts"
+          )
+
+          if not p.exists():
+              raise SystemExit(
+                  f"ERROR: BE14000 DTS not found: {p}"
+              )
+
+          s = p.read_text()
+
+          if (
+              "touchscreen-swapped-x-y;" in s
+              and "touchscreen-inverted-x;" in s
+              and "touchscreen-inverted-y;" in s
+          ):
+              print("Touchscreen rotation fix already present.")
+              raise SystemExit(0)
+
+          old = "touchscreen-swapped-x-y;"
+
+          new = """touchscreen-swapped-x-y;
+                  touchscreen-inverted-x;
+                  touchscreen-inverted-y;"""
+
+          if old not in s:
+              raise SystemExit(
+                  "ERROR: touchscreen-swapped-x-y was not found "
+                  "in the BE14000 DTS."
+              )
+
+          s = s.replace(old, new, 1)
+          p.write_text(s)
+
+          print("Applied BE14000 180-degree touchscreen fix.")
+          PY
+
+          echo
+          echo "===== Touchscreen DTS ====="
+
+          grep -A12 -B4 "touchscreen@58" \
+            target/linux/mediatek/dts/mt7988a-glinet-gl-be14000.dts
+
+      # ============================================================
+      # Generate Target Configuration
+      # ============================================================
+      - name: Generate Target Configuration
+        run: |
+          cd openwrt
+
+          cat << 'EOF_CONFIG' > .config
+          CONFIG_TARGET_mediatek=y
+          CONFIG_TARGET_mediatek_filogic=y
+          CONFIG_TARGET_MULTI_PROFILE=y
+          CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_glinet_gl-be14000=y
+
+          # Standard LuCI
+          CONFIG_PACKAGE_luci=y
+          CONFIG_PACKAGE_luci-ssl=y
+
+          # GL.iNet front-panel UI
+          CONFIG_PACKAGE_glinet-panel-ui=y
+          CONFIG_PACKAGE_ucode-mod-lvgl=y
+          EOF_CONFIG
+
+          make defconfig
+
+      # ============================================================
+      # Show Important Configuration
+      # ============================================================
+      - name: Verify Flint 4 Configuration
+        run: |
+          cd openwrt
+
+          echo "========================================"
+          echo "TARGET"
+          echo "========================================"
+
           grep -E \
-            'CONFIG_PACKAGE_(glinet-panel-ui|glinet-panel-firmware|ucode-mod-lvgl|lvgl)' \
+            'CONFIG_TARGET_mediatek|CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_glinet_gl-be14000' \
             .config || true
 
+          echo
+          echo "========================================"
+          echo "PANEL UI"
+          echo "========================================"
+
+          grep -E \
+            'CONFIG_PACKAGE_(glinet-panel-ui|ucode-mod-lvgl|lvgl)' \
+            .config || true
+
+          echo
+          echo "========================================"
+          echo "RTL8261C FIX"
+          echo "========================================"
+
+          ls -l \
+            target/linux/generic/pending-6.18/744-net-phy-realtek-fix-RTL8261C-firmware-probe.patch
+
+          echo
+          echo "========================================"
+          echo "PRODUCTION DT / TOUCHSCREEN"
+          echo "========================================"
+
+          grep -F 'reg = <0x0 0x40000000 0x0 0x80000000>;' \
+            target/linux/mediatek/dts/mt7988a-glinet-gl-be14000.dts
+
+          grep -A10 -B3 "touchscreen@58" \
+            target/linux/mediatek/dts/mt7988a-glinet-gl-be14000.dts || true
+
+      # ============================================================
+      # Download Source Packages
+      # ============================================================
       - name: Download Source Packages
-        working-directory: openwrt
-        env:
-          NONINTERACTIVE: "1"
         run: |
-          make download -j2
+          cd openwrt
 
+          make download -j$(nproc)
+
+          find dl -size -1024c -exec rm -f {} \;
+
+      # ============================================================
+      # Compile Firmware
+      # ============================================================
       - name: Compile Firmware
-        working-directory: openwrt
-        env:
-          NONINTERACTIVE: "1"
         run: |
-          make -j2 V=s
+          cd openwrt
 
+          echo "Building on $(nproc) cores..."
+
+          make -j$(nproc) || make -j1 V=s
+
+      # ============================================================
+      # Prepare Artifacts
+      # ============================================================
       - name: Prepare Artifacts
         run: |
-          mkdir -p bin-artifacts
+          cd openwrt
 
-          find openwrt/bin/targets/ \
+          mkdir -p ../firmware-out
+
+          find bin/targets/mediatek/filogic/ \
             -type f \
             \( \
               -name "*.bin" \
-              -o -name "*.manifest" \
-              -o -name "*.itb" \
               -o -name "*.img" \
+              -o -name "*.manifest" \
             \) \
-            -exec cp {} bin-artifacts/ \;
+            -exec cp {} ../firmware-out/ \;
 
+          echo
           echo "========================================"
-          echo "Firmware artifacts"
+          echo "BUILD ARTIFACTS"
           echo "========================================"
-          ls -lah bin-artifacts/
 
+          ls -lah ../firmware-out
+
+      # ============================================================
+      # Upload Firmware
+      # ============================================================
       - name: Upload Firmware Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: GL-BE14000-Flint4-Blogic-PanelUI
-          path: bin-artifacts/
+          name: Flint4-GL-BE14000-OpenWrt-PanelUI-RTL8261C-ProductionDT
+          path: firmware-out
