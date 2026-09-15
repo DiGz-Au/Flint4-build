@@ -1,11 +1,11 @@
-name: Build Flint 4 Firmware - Panel UI + RTL8261C + Production DT
+name: Build Flint 4 Firmware - Panel UI + RTL8261C + Production DT + SQM
 
 on:
   workflow_dispatch:
 
 jobs:
   build:
-    name: Build GL-BE14000 OpenWrt with Panel UI + Driver Fixes
+    name: Build GL-BE14000 OpenWrt with Panel UI + Driver Fixes + SQM
     runs-on: ubuntu-22.04
 
     steps:
@@ -152,6 +152,52 @@ jobs:
           ./scripts/feeds install -a
 
       # ============================================================
+      # Detect Cake-MQ / Multi-Queue CAKE Support
+      #
+      # Informational only. This does not modify the build.
+      # The build continues whether Cake-MQ exists or not.
+      # ============================================================
+      - name: Detect Cake-MQ Support
+        run: |
+          cd openwrt
+
+          echo "========================================"
+          echo "CAKE-MQ / MULTI-QUEUE CAKE DETECTION"
+          echo "========================================"
+
+          echo
+          echo "Searching source tree for Cake-MQ..."
+          echo
+
+          grep -RniE \
+            'cake[-_]?mq|CAKE[-_]?MQ|SCHED.*CAKE.*MQ|MULTI.*QUEUE.*CAKE' \
+            package target include feeds 2>/dev/null \
+            | head -100 || true
+
+          echo
+          echo "========================================"
+          echo "CAKE-RELATED PACKAGE DEFINITIONS"
+          echo "========================================"
+
+          grep -RniE \
+            'kmod-sched-cake|KernelPackage.*cake|CONFIG_NET_SCH_CAKE' \
+            package target include feeds 2>/dev/null \
+            | head -100 || true
+
+          echo
+          echo "========================================"
+          echo "MULTI-QUEUE / MQ DEFINITIONS"
+          echo "========================================"
+
+          grep -RniE \
+            'kmod-sched-mq|NET_SCH_MQ|NET_SCH_MQPRIO|MULTIQUEUE' \
+            package target include feeds 2>/dev/null \
+            | head -100 || true
+
+          echo
+          echo "Cake-MQ detection complete."
+
+      # ============================================================
       # Fix BE14000 Touchscreen Rotation
       #
       # The production DT commit above should already add both
@@ -228,6 +274,21 @@ jobs:
           # GL.iNet front-panel UI
           CONFIG_PACKAGE_glinet-panel-ui=y
           CONFIG_PACKAGE_ucode-mod-lvgl=y
+
+          # SQM
+          CONFIG_PACKAGE_sqm-scripts=y
+          CONFIG_PACKAGE_luci-app-sqm=y
+
+          # SQM queue disciplines
+          CONFIG_PACKAGE_kmod-sched-core=y
+          CONFIG_PACKAGE_kmod-sched-cake=y
+          CONFIG_PACKAGE_kmod-sched-codel=y
+          CONFIG_PACKAGE_kmod-sched-fq=y
+          CONFIG_PACKAGE_kmod-sched-fq-codel=y
+
+          # IFB support for ingress SQM
+          CONFIG_PACKAGE_kmod-ifb=y
+
           EOF_CONFIG
 
           make defconfig
@@ -254,6 +315,15 @@ jobs:
 
           grep -E \
             'CONFIG_PACKAGE_(glinet-panel-ui|ucode-mod-lvgl|lvgl)' \
+            .config || true
+
+          echo
+          echo "========================================"
+          echo "SQM / QDISC SUPPORT"
+          echo "========================================"
+
+          grep -E \
+            'CONFIG_PACKAGE_(sqm-scripts|luci-app-sqm|kmod-sched-core|kmod-sched-cake|kmod-sched-codel|kmod-sched-fq|kmod-sched-fq-codel|kmod-ifb)' \
             .config || true
 
           echo
@@ -328,5 +398,5 @@ jobs:
       - name: Upload Firmware Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Flint4-GL-BE14000-OpenWrt-PanelUI-RTL8261C-ProductionDT
+          name: Flint4-GL-BE14000-OpenWrt-PanelUI-RTL8261C-ProductionDT-SQM
           path: firmware-out
