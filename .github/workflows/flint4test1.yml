@@ -1,11 +1,11 @@
-name: Build Flint 4 Firmware - Panel UI + RTL8261C + Production DT + SQM
+name: Build Flint 4 Firmware - Panel UI + YT9224 + SQM
 
 on:
   workflow_dispatch:
 
 jobs:
   build:
-    name: Build GL-BE14000 OpenWrt with Panel UI + Driver Fixes + SQM
+    name: Build GL-BE14000 OpenWrt with Panel UI + YT9224 + SQM
     runs-on: ubuntu-22.04
 
     steps:
@@ -24,12 +24,29 @@ jobs:
           remove-docker-images: 'true'
 
       # ============================================================
+      # Free Runner Space
+      # ============================================================
+      - name: Free Runner Space
+        run: |
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo rm -rf /usr/local/share/boost
+          sudo rm -rf /usr/local/.ghcup
+          sudo rm -rf /opt/microsoft
+          sudo docker system prune -af || true
+          sudo apt-get clean
+          sudo rm -rf /var/lib/apt/lists/*
+          df -h
+
+      # ============================================================
       # Build Dependencies
       # ============================================================
       - name: Install Build Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
+          sudo apt-get install -y --no-install-recommends \
             build-essential \
             clang \
             flex \
@@ -48,6 +65,10 @@ jobs:
             file \
             wget \
             device-tree-compiler
+
+          sudo apt-get clean
+          sudo rm -rf /var/lib/apt/lists/*
+          df -h
 
       # ============================================================
       # Checkout the known-good Flint 4 branch
@@ -68,11 +89,9 @@ jobs:
           git log -1 --oneline
 
       # ============================================================
-      # Apply only the two fixes missing from flint4-support
-      #   965af1a - RTL8261C firmware probe fix
-      #   8fe7ba8 - production GL-BE14000 DT (2 GiB + touch rotation)
+      # Apply Missing Flint 4 Fixes
       # ============================================================
-      - name: Apply RTL8261C and Production DT Fixes
+      - name: Apply Missing Flint 4 Fixes
         run: |
           set -euo pipefail
           cd openwrt
@@ -81,22 +100,38 @@ jobs:
           git config user.email "actions@github.com"
 
           BLOGIC_REPO="https://github.com/blogic/openwrt.git"
+          BRIDGE_COMMIT="b1e81abd32ed4369fc1d413b5c33b6ce8ca5a3eb"
           RTL8261C_COMMIT="965af1a746277d281d8f0277de32d4ad73152c6d"
           PRODUCTION_DT_COMMIT="8fe7ba853d28cbb9f8a9e104d3fcde960fd96dae"
 
+          BRIDGE_PATCH="target/linux/mediatek/patches-6.18/967-42-net-dsa-yt922x-add-hardware-bridge-offload.patch"
+          RTL_PATCH="target/linux/generic/pending-6.18/744-net-phy-realtek-fix-RTL8261C-firmware-probe.patch"
+          DTS="target/linux/mediatek/dts/mt7988a-glinet-gl-be14000.dts"
+
           echo "========================================"
-          echo "FETCHING FIX COMMITS"
+          echo "FETCHING MISSING FLINT 4 COMMITS"
           echo "========================================"
 
+          git fetch --no-tags "$BLOGIC_REPO" "$BRIDGE_COMMIT"
           git fetch --no-tags "$BLOGIC_REPO" "$RTL8261C_COMMIT"
           git fetch --no-tags "$BLOGIC_REPO" "$PRODUCTION_DT_COMMIT"
 
           echo
           echo "========================================"
-          echo "RTL8261C FIRMWARE PROBE FIX"
+          echo "YT9224 HARDWARE BRIDGE OFFLOAD"
           echo "========================================"
 
-          RTL_PATCH="target/linux/generic/pending-6.18/744-net-phy-realtek-fix-RTL8261C-firmware-probe.patch"
+          if [ -f "$BRIDGE_PATCH" ]; then
+            echo "YT9224 bridge-offload patch is already present; skipping commit."
+          else
+            git show -s --format='%H %s' "$BRIDGE_COMMIT"
+            git cherry-pick "$BRIDGE_COMMIT"
+          fi
+
+          echo
+          echo "========================================"
+          echo "RTL8261C FIRMWARE PROBE FIX"
+          echo "========================================"
 
           if [ -f "$RTL_PATCH" ]; then
             echo "RTL8261C probe patch is already present; skipping commit."
@@ -109,8 +144,6 @@ jobs:
           echo "========================================"
           echo "GL-BE14000 PRODUCTION DT FIX"
           echo "========================================"
-
-          DTS="target/linux/mediatek/dts/mt7988a-glinet-gl-be14000.dts"
 
           if grep -Fq 'reg = <0x0 0x40000000 0x0 0x80000000>;' "$DTS" && \
              grep -Fq 'touchscreen-inverted-x;' "$DTS" && \
@@ -126,7 +159,11 @@ jobs:
           echo "VERIFY APPLIED FIXES"
           echo "========================================"
 
+          test -f "$BRIDGE_PATCH"
+          grep -Fq 'yt922x_dsa_port_bridge_join' "$BRIDGE_PATCH"
+
           test -f "$RTL_PATCH"
+
           grep -F 'reg = <0x0 0x40000000 0x0 0x80000000>;' "$DTS"
           grep -F 'touchscreen-swapped-x-y;' "$DTS"
           grep -F 'touchscreen-inverted-x;' "$DTS"
@@ -134,9 +171,28 @@ jobs:
 
           echo
           echo "========================================"
+          echo "PATCH FILES"
+          echo "========================================"
+          ls -lh "$BRIDGE_PATCH" "$RTL_PATCH"
+
+          echo
+          echo "========================================"
           echo "FINAL PATCHED HISTORY"
           echo "========================================"
-          git log -5 --oneline
+          git log -6 --oneline
+
+          echo
+          echo "========================================"
+          echo "GL-BE14000 ETHERNET MAC DTS"
+          echo "========================================"
+
+          echo
+          echo "DTS: $DTS"
+          echo
+
+          grep -n -A20 -B10 -E \
+            'nvmem-cells.*macaddr|nvmem-cell-names|&gmac|ethernet' \
+            "$DTS" || true
 
       # ============================================================
       # Add Blogic Panel UI Feed
@@ -152,56 +208,7 @@ jobs:
           ./scripts/feeds install -a
 
       # ============================================================
-      # Detect Cake-MQ / Multi-Queue CAKE Support
-      #
-      # Informational only. This does not modify the build.
-      # The build continues whether Cake-MQ exists or not.
-      # ============================================================
-      - name: Detect Cake-MQ Support
-        run: |
-          cd openwrt
-
-          echo "========================================"
-          echo "CAKE-MQ / MULTI-QUEUE CAKE DETECTION"
-          echo "========================================"
-
-          echo
-          echo "Searching source tree for Cake-MQ..."
-          echo
-
-          grep -RniE \
-            'cake[-_]?mq|CAKE[-_]?MQ|SCHED.*CAKE.*MQ|MULTI.*QUEUE.*CAKE' \
-            package target include feeds 2>/dev/null \
-            | head -100 || true
-
-          echo
-          echo "========================================"
-          echo "CAKE-RELATED PACKAGE DEFINITIONS"
-          echo "========================================"
-
-          grep -RniE \
-            'kmod-sched-cake|KernelPackage.*cake|CONFIG_NET_SCH_CAKE' \
-            package target include feeds 2>/dev/null \
-            | head -100 || true
-
-          echo
-          echo "========================================"
-          echo "MULTI-QUEUE / MQ DEFINITIONS"
-          echo "========================================"
-
-          grep -RniE \
-            'kmod-sched-mq|NET_SCH_MQ|NET_SCH_MQPRIO|MULTIQUEUE' \
-            package target include feeds 2>/dev/null \
-            | head -100 || true
-
-          echo
-          echo "Cake-MQ detection complete."
-
-      # ============================================================
       # Fix BE14000 Touchscreen Rotation
-      #
-      # The production DT commit above should already add both
-      # inversions. Keep this known-good step as a safety check.
       # ============================================================
       - name: Fix BE14000 Touchscreen Rotation
         run: |
@@ -275,20 +282,12 @@ jobs:
           CONFIG_PACKAGE_glinet-panel-ui=y
           CONFIG_PACKAGE_ucode-mod-lvgl=y
 
-          # SQM
-          CONFIG_PACKAGE_sqm-scripts=y
+          # SQM / CAKE
           CONFIG_PACKAGE_luci-app-sqm=y
-
-          # SQM queue disciplines
-          CONFIG_PACKAGE_kmod-sched-core=y
-          CONFIG_PACKAGE_kmod-sched-cake=y
-          CONFIG_PACKAGE_kmod-sched-codel=y
-          CONFIG_PACKAGE_kmod-sched-fq=y
-          CONFIG_PACKAGE_kmod-sched-fq-codel=y
-
-          # IFB support for ingress SQM
+          CONFIG_PACKAGE_sqm-scripts=y
           CONFIG_PACKAGE_kmod-ifb=y
-
+          CONFIG_PACKAGE_kmod-sched-cake=y
+          CONFIG_PACKAGE_ip-full=y
           EOF_CONFIG
 
           make defconfig
@@ -315,15 +314,6 @@ jobs:
 
           grep -E \
             'CONFIG_PACKAGE_(glinet-panel-ui|ucode-mod-lvgl|lvgl)' \
-            .config || true
-
-          echo
-          echo "========================================"
-          echo "SQM / QDISC SUPPORT"
-          echo "========================================"
-
-          grep -E \
-            'CONFIG_PACKAGE_(sqm-scripts|luci-app-sqm|kmod-sched-core|kmod-sched-cake|kmod-sched-codel|kmod-sched-fq|kmod-sched-fq-codel|kmod-ifb)' \
             .config || true
 
           echo
@@ -398,5 +388,5 @@ jobs:
       - name: Upload Firmware Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Flint4-GL-BE14000-OpenWrt-PanelUI-RTL8261C-ProductionDT-SQM
+          name: Flint4-GL-BE14000-OpenWrt-PanelUI-YT9224-SQM
           path: firmware-out
