@@ -1,5 +1,4 @@
-name: Build Flint 4 Firmware - Panel UI + YT9224 + SQM
-
+name: Flint 4 mac fix
 on:
   workflow_dispatch:
 
@@ -156,6 +155,53 @@ jobs:
 
           echo
           echo "========================================"
+          echo "GL-BE14000 GMAC1 FACTORY MAC FIX"
+          echo "========================================"
+
+          python3 <<'PY'
+          from pathlib import Path
+
+          p = Path(
+              "target/linux/mediatek/dts/"
+              "mt7988a-glinet-gl-be14000.dts"
+          )
+
+          if not p.exists():
+              raise SystemExit(
+                  f"ERROR: BE14000 DTS not found: {p}"
+              )
+
+          s = p.read_text()
+
+          expected = 'nvmem-cells = <&macaddr_ethernet 1>;'
+
+          if expected in s:
+              print("GMAC1 factory MAC fix already present.")
+              raise SystemExit(0)
+
+          old = """&gmac1 {
+          	phy-mode = "usxgmii";
+          """
+
+          new = """&gmac1 {
+          	nvmem-cells = <&macaddr_ethernet 1>;
+          	nvmem-cell-names = "mac-address";
+          	phy-mode = "usxgmii";
+          """
+
+          if old not in s:
+              raise SystemExit(
+                  "ERROR: Could not locate expected gmac1 DTS block."
+              )
+
+          s = s.replace(old, new, 1)
+          p.write_text(s)
+
+          print("Applied GMAC1 factory MAC assignment.")
+          PY
+
+          echo
+          echo "========================================"
           echo "VERIFY APPLIED FIXES"
           echo "========================================"
 
@@ -169,30 +215,29 @@ jobs:
           grep -F 'touchscreen-inverted-x;' "$DTS"
           grep -F 'touchscreen-inverted-y;' "$DTS"
 
+          # GMAC1 must use factory Ethernet MAC base + 1
+          grep -F 'nvmem-cells = <&macaddr_ethernet 1>;' "$DTS"
+
+          echo
+          echo "========================================"
+          echo "GMAC MAC ASSIGNMENTS"
+          echo "========================================"
+
+          grep -n -A8 -E '^&gmac[012]' "$DTS"
+
           echo
           echo "========================================"
           echo "PATCH FILES"
           echo "========================================"
+
           ls -lh "$BRIDGE_PATCH" "$RTL_PATCH"
 
           echo
           echo "========================================"
           echo "FINAL PATCHED HISTORY"
           echo "========================================"
+
           git log -6 --oneline
-
-          echo
-          echo "========================================"
-          echo "GL-BE14000 ETHERNET MAC DTS"
-          echo "========================================"
-
-          echo
-          echo "DTS: $DTS"
-          echo
-
-          grep -n -A20 -B10 -E \
-            'nvmem-cells.*macaddr|nvmem-cell-names|&gmac|ethernet' \
-            "$DTS" || true
 
       # ============================================================
       # Add Blogic Panel UI Feed
@@ -335,6 +380,17 @@ jobs:
           grep -A10 -B3 "touchscreen@58" \
             target/linux/mediatek/dts/mt7988a-glinet-gl-be14000.dts || true
 
+          echo
+          echo "========================================"
+          echo "GMAC1 FACTORY MAC"
+          echo "========================================"
+
+          grep -F 'nvmem-cells = <&macaddr_ethernet 1>;' \
+            target/linux/mediatek/dts/mt7988a-glinet-gl-be14000.dts
+
+          grep -n -A8 '^&gmac1' \
+            target/linux/mediatek/dts/mt7988a-glinet-gl-be14000.dts
+
       # ============================================================
       # Download Source Packages
       # ============================================================
@@ -388,5 +444,5 @@ jobs:
       - name: Upload Firmware Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Flint4-GL-BE14000-OpenWrt-PanelUI-YT9224-SQM
+          name: Flint4-GL-BE14000-OpenWrt-PanelUI-YT9224-SQM-GMAC-Fix
           path: firmware-out
