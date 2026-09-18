@@ -1,18 +1,94 @@
-name: Inspect GL.iNet 25.12 BE14000
+name: Build GL.iNet 25.12 - Flint 4
 
 on:
   workflow_dispatch:
 
 jobs:
-  inspect:
+  build:
     runs-on: ubuntu-22.04
 
     steps:
+      - name: Free disk space
+        run: |
+          set -euo pipefail
+
+          echo "========================================"
+          echo "DISK BEFORE CLEANUP"
+          echo "========================================"
+          df -h
+
+          echo
+          echo "========================================"
+          echo "REMOVING UNUSED RUNNER SOFTWARE"
+          echo "========================================"
+
+          sudo rm -rf /usr/local/lib/android || true
+          sudo rm -rf /usr/share/dotnet || true
+          sudo rm -rf /opt/ghc || true
+          sudo rm -rf /usr/local/.ghcup || true
+          sudo rm -rf /opt/hostedtoolcache/CodeQL || true
+          sudo rm -rf /usr/local/share/boost || true
+
+          sudo docker image prune --all --force || true
+
+          sudo apt-get clean
+          sudo rm -rf /var/lib/apt/lists/*
+
+          echo
+          echo "========================================"
+          echo "DISK AFTER CLEANUP"
+          echo "========================================"
+          df -h
+
+      - name: Install build dependencies
+        run: |
+          set -euo pipefail
+
+          sudo apt-get update
+
+          sudo apt-get install -y \
+            build-essential \
+            clang \
+            flex \
+            bison \
+            g++ \
+            gawk \
+            gcc-multilib \
+            gettext \
+            git \
+            libncurses-dev \
+            libssl-dev \
+            python3 \
+            python3-setuptools \
+            rsync \
+            swig \
+            unzip \
+            zlib1g-dev \
+            file \
+            wget \
+            curl \
+            jq \
+            time
+
+          sudo apt-get clean
+          sudo rm -rf /var/lib/apt/lists/*
+
+          echo
+          echo "========================================"
+          echo "DISK AFTER DEPENDENCIES"
+          echo "========================================"
+          df -h
+
       - name: Clone GL.iNet OpenWrt 25.12
         run: |
           set -euo pipefail
 
+          echo "========================================"
+          echo "CLONING GL.iNet OPENWRT 25.12"
+          echo "========================================"
+
           git clone \
+            --depth 1 \
             --branch openwrt-25.12 \
             --single-branch \
             https://github.com/gl-inet/gl-openwrt.git \
@@ -20,131 +96,287 @@ jobs:
 
           cd gl-openwrt
 
+          echo
           echo "========================================"
-          echo "GL.iNet BASELINE"
-          echo "========================================"
-
-          git log -1 --oneline
-          git branch --show-current
-
-      - name: Find GL-BE14000 support
-        run: |
-          cd gl-openwrt
-
-          echo "========================================"
-          echo "GL-BE14000 REFERENCES"
+          echo "GL.iNet OPENWRT BASELINE"
           echo "========================================"
 
-          grep -RniE \
-            'GL-BE14000|gl-be14000|be14000' \
-            target/linux/mediatek \
-            package \
-            2>/dev/null || true
-
-      - name: Find BE14000 commits
-        run: |
-          cd gl-openwrt
-
-          echo "========================================"
-          echo "GL-BE14000 COMMIT HISTORY"
-          echo "========================================"
-
-          git log \
-            --oneline \
-            --all \
-            --regexp-ignore-case \
-            --grep='BE14000\|GL-BE14000\|Flint 4' \
-            || true
-
-      - name: Find BE14000 files
-        run: |
-          cd gl-openwrt
-
-          echo "========================================"
-          echo "GL-BE14000 FILES"
-          echo "========================================"
-
-          find target/linux/mediatek \
-            \( -iname '*be14000*' -o -iname '*glinet*' \) \
-            -print \
-            2>/dev/null || true
-
-      - name: Inspect YT9224 and YT8824
-        run: |
-          cd gl-openwrt
-
-          echo "========================================"
-          echo "YT9224 / YT8824"
-          echo "========================================"
-
-          grep -RniE \
-            'yt922|yt921|yt8824' \
-            target/linux/mediatek \
-            2>/dev/null | head -300 || true
-
-      - name: Inspect MediaTek PPE and hardware offload
-        run: |
-          cd gl-openwrt
-
-          echo "========================================"
-          echo "PPE / HARDWARE OFFLOAD"
-          echo "========================================"
-
-          grep -RniE \
-            'ppe|flow.?offload|hardware.?offload' \
-            target/linux/mediatek \
-            2>/dev/null | head -300 || true
-
-      - name: Inspect MT7996 and WED
-        run: |
-          cd gl-openwrt
-
-          echo "========================================"
-          echo "MT7996 / WED"
-          echo "========================================"
-
-          grep -RniE \
-            'mt7996|mtk_wed|wed' \
-            target/linux/mediatek \
-            2>/dev/null | head -300 || true
-
-      - name: Show BE14000 DTS
-        run: |
-          cd gl-openwrt
-
-          echo "========================================"
-          echo "BE14000 DTS CONTENT"
-          echo "========================================"
-
-          DTS=$(find target/linux/mediatek \
-            -type f \
-            \( -iname '*be14000*.dts' -o -iname '*be14000*.dtsi' \) \
-            2>/dev/null)
-
-          if [ -z "$DTS" ]; then
-            echo "No BE14000 DTS/DTSI found."
-          else
-            for file in $DTS; do
-              echo
-              echo "========================================"
-              echo "FILE: $file"
-              echo "========================================"
-              cat "$file"
-            done
-          fi
-
-      - name: Summary
-        run: |
-          cd gl-openwrt
-
-          echo "========================================"
-          echo "INSPECTION COMPLETE"
-          echo "========================================"
           echo "Branch:"
           git branch --show-current
+
           echo
           echo "HEAD:"
           git log -1 --oneline
+
           echo
-          echo "Kernel:"
-          grep 'KERNEL_PATCHVER' target/linux/mediatek/Makefile || true
+          echo "Repository size:"
+          du -sh .
+
+      - name: Update and install feeds
+        run: |
+          set -euo pipefail
+          cd gl-openwrt
+
+          echo "========================================"
+          echo "UPDATING FEEDS"
+          echo "========================================"
+
+          ./scripts/feeds update -a
+
+          echo
+          echo "========================================"
+          echo "INSTALLING FEEDS"
+          echo "========================================"
+
+          ./scripts/feeds install -a
+
+          echo
+          echo "========================================"
+          echo "DISK AFTER FEEDS"
+          echo "========================================"
+
+          df -h
+          du -sh . || true
+
+      - name: Configure GL-BE14000
+        run: |
+          set -euo pipefail
+          cd gl-openwrt
+
+          echo "========================================"
+          echo "CONFIGURING GL-BE14000"
+          echo "========================================"
+
+          cat > .config <<'EOF'
+          CONFIG_TARGET_mediatek=y
+          CONFIG_TARGET_mediatek_filogic=y
+          CONFIG_TARGET_mediatek_filogic_DEVICE_glinet_gl-be14000=y
+          CONFIG_PACKAGE_luci=y
+          CONFIG_PACKAGE_luci-ssl=y
+          CONFIG_PACKAGE_htop=y
+          CONFIG_PACKAGE_ethtool=y
+          CONFIG_PACKAGE_iperf3=y
+          EOF
+
+          make defconfig
+
+          echo
+          echo "========================================"
+          echo "VERIFY GL-BE14000 CONFIG"
+          echo "========================================"
+
+          grep -E \
+            'CONFIG_TARGET_mediatek|CONFIG_TARGET_mediatek_filogic|glinet_gl-be14000' \
+            .config
+
+          echo
+          echo "========================================"
+          echo "KERNEL VERSION"
+          echo "========================================"
+
+          grep -E \
+            'KERNEL_PATCHVER|KERNEL_TESTING_PATCHVER' \
+            target/linux/mediatek/Makefile || true
+
+          echo
+          echo "========================================"
+          echo "BE14000 DEVICE DEFINITION"
+          echo "========================================"
+
+          sed -n \
+            '/define Device\/glinet_gl-be14000/,/TARGET_DEVICES.*glinet_gl-be14000/p' \
+            target/linux/mediatek/image/filogic.mk || true
+
+      - name: Verify BE14000 hardware support
+        run: |
+          set -euo pipefail
+          cd gl-openwrt
+
+          echo "========================================"
+          echo "BE14000 DTS"
+          echo "========================================"
+
+          ls -lh \
+            target/linux/mediatek/dts/mt7988a-glinet-gl-be14000.dts
+
+          echo
+          echo "========================================"
+          echo "YT922x / YT921x SUPPORT"
+          echo "========================================"
+
+          find target/linux/mediatek \
+            -type f \
+            | grep -Ei 'yt922|yt921' || true
+
+          echo
+          echo "========================================"
+          echo "MOTORCOMM / PPE / OFFLOAD"
+          echo "========================================"
+
+          grep -RniE \
+            'YT922|YT921|hardware.*offload|flow.*offload|PPE' \
+            target/linux/mediatek/patches-6.12 \
+            2>/dev/null \
+            | head -200 || true
+
+          echo
+          echo "========================================"
+          echo "WED SUPPORT"
+          echo "========================================"
+
+          grep -RniE \
+            'mt7988.*wed|mediatek,wed|mt7996.*wed' \
+            target/linux/mediatek \
+            2>/dev/null \
+            | head -100 || true
+
+      - name: Download sources
+        run: |
+          set -euo pipefail
+          cd gl-openwrt
+
+          echo "========================================"
+          echo "DOWNLOADING SOURCES"
+          echo "========================================"
+
+          make download -j"$(nproc)"
+
+          echo
+          echo "Removing incomplete downloads..."
+          find dl -size -1024c -print -delete || true
+
+          echo
+          echo "========================================"
+          echo "DISK AFTER DOWNLOAD"
+          echo "========================================"
+
+          df -h
+
+          echo
+          echo "OpenWrt tree:"
+          du -sh .
+
+          echo
+          echo "Download directory:"
+          du -sh dl || true
+
+      - name: Build GL-BE14000
+        run: |
+          set -euo pipefail
+          cd gl-openwrt
+
+          echo "========================================"
+          echo "BUILDING GL.iNet GL-BE14000"
+          echo "========================================"
+
+          echo "CPU threads: $(nproc)"
+
+          echo
+          echo "Disk before build:"
+          df -h
+
+          echo
+          echo "Starting normal parallel build..."
+
+          if ! make -j"$(nproc)"; then
+
+            echo
+            echo "========================================"
+            echo "PARALLEL BUILD FAILED"
+            echo "RETRYING SINGLE-THREADED WITH V=s"
+            echo "========================================"
+
+            make -j1 V=s
+
+          fi
+
+      - name: Show generated images
+        if: always()
+        run: |
+          echo "========================================"
+          echo "GENERATED IMAGES"
+          echo "========================================"
+
+          if [ -d gl-openwrt/bin/targets/mediatek/filogic ]; then
+
+            find gl-openwrt/bin/targets/mediatek/filogic \
+              -maxdepth 1 \
+              -type f \
+              -printf '%f  %s bytes\n'
+
+          else
+
+            echo "No filogic output directory found."
+
+          fi
+
+          echo
+          echo "========================================"
+          echo "FINAL DISK SPACE"
+          echo "========================================"
+
+          df -h
+
+          echo
+          echo "========================================"
+          echo "LARGEST OPENWRT DIRECTORIES"
+          echo "========================================"
+
+          du -h \
+            --max-depth=1 \
+            gl-openwrt \
+            2>/dev/null \
+            | sort -h \
+            | tail -20 || true
+
+      - name: Collect GL-BE14000 firmware
+        if: success()
+        run: |
+          set -euo pipefail
+
+          mkdir -p firmware
+
+          echo "========================================"
+          echo "COLLECTING GL-BE14000 FILES"
+          echo "========================================"
+
+          find gl-openwrt/bin/targets/mediatek/filogic \
+            -maxdepth 1 \
+            -type f \
+            -iname '*gl-be14000*' \
+            -exec cp -v {} firmware/ \;
+
+          if [ -f gl-openwrt/bin/targets/mediatek/filogic/sha256sums ]; then
+
+            cp -v \
+              gl-openwrt/bin/targets/mediatek/filogic/sha256sums \
+              firmware/
+
+          fi
+
+          echo
+          echo "========================================"
+          echo "FIRMWARE ARTIFACT CONTENTS"
+          echo "========================================"
+
+          ls -lh firmware/
+
+          if ! find firmware \
+            -maxdepth 1 \
+            -type f \
+            -iname '*gl-be14000*' \
+            | grep -q .; then
+
+            echo "ERROR: No GL-BE14000 firmware image found."
+            exit 1
+
+          fi
+
+      - name: Upload GL-BE14000 firmware
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: glinet-be14000-openwrt-25.12
+          path: firmware/
+          if-no-files-found: error
+          retention-days: 14
