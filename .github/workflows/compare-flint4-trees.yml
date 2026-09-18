@@ -1,0 +1,452 @@
+name: Compare Flint 4 Trees
+
+on:
+  workflow_dispatch:
+
+jobs:
+  compare:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Free disk space
+        run: |
+          set -euo pipefail
+
+          sudo rm -rf /usr/local/lib/android || true
+          sudo rm -rf /usr/share/dotnet || true
+          sudo rm -rf /opt/ghc || true
+          sudo rm -rf /usr/local/.ghcup || true
+          sudo rm -rf /opt/hostedtoolcache/CodeQL || true
+          sudo rm -rf /usr/local/share/boost || true
+          sudo docker image prune --all --force || true
+
+          df -h
+
+      - name: Clone GL.iNet OpenWrt 25.12
+        run: |
+          set -euo pipefail
+
+          git clone \
+            --branch openwrt-25.12 \
+            --single-branch \
+            https://github.com/gl-inet/gl-openwrt.git \
+            glinet
+
+          echo "========================================"
+          echo "GL.iNet HEAD"
+          echo "========================================"
+          git -C glinet log -1 --oneline
+
+      - name: Clone JiaY-shi Flint 4 tree
+        run: |
+          set -euo pipefail
+
+          git clone \
+            --branch flint4-support \
+            --single-branch \
+            https://github.com/JiaY-shi/openwrt.git \
+            jiay
+
+          echo "========================================"
+          echo "JiaY-shi HEAD"
+          echo "========================================"
+          git -C jiay log -1 --oneline
+
+      - name: Clone BLogic OpenWrt
+        run: |
+          set -euo pipefail
+
+          git clone \
+            https://github.com/blogic/openwrt.git \
+            blogic
+
+          echo "========================================"
+          echo "BLogic HEAD"
+          echo "========================================"
+          git -C blogic log -1 --oneline
+
+      - name: Create comparison report
+        run: |
+          set -euo pipefail
+
+          REPORT="$GITHUB_WORKSPACE/flint4-comparison.txt"
+
+          {
+            echo "============================================================"
+            echo "FLINT 4 / GL-BE14000 TREE COMPARISON"
+            echo "============================================================"
+            echo
+
+            echo "GL.iNet:"
+            git -C glinet log -1 --format='%H %s'
+            echo
+
+            echo "JiaY-shi:"
+            git -C jiay log -1 --format='%H %s'
+            echo
+
+            echo "BLogic:"
+            git -C blogic log -1 --format='%H %s'
+            echo
+
+            echo
+            echo "============================================================"
+            echo "KERNEL VERSIONS"
+            echo "============================================================"
+
+            for TREE in glinet jiay blogic; do
+              echo
+              echo "----- $TREE -----"
+              grep -Rni \
+                'KERNEL_PATCHVER.*=' \
+                "$TREE/target/linux/mediatek/Makefile" \
+                2>/dev/null || true
+            done
+
+            echo
+            echo "============================================================"
+            echo "GL-BE14000 DEVICE FILES"
+            echo "============================================================"
+
+            for TREE in glinet jiay blogic; do
+              echo
+              echo "----- $TREE -----"
+              find "$TREE/target/linux/mediatek" \
+                -type f \
+                \( -iname '*be14000*' -o -iname '*gl-be14000*' \) \
+                -print 2>/dev/null || true
+            done
+
+            echo
+            echo "============================================================"
+            echo "BE14000 COMMIT HISTORY"
+            echo "============================================================"
+
+            for TREE in glinet jiay blogic; do
+              echo
+              echo "----- $TREE -----"
+              git -C "$TREE" log \
+                --all \
+                --oneline \
+                --regexp-ignore-case \
+                --grep='BE14000\|Flint 4\|GL-BE14000' \
+                -n 100 || true
+            done
+
+            echo
+            echo "============================================================"
+            echo "YT9224 / YT922X / YT921X COMMITS"
+            echo "============================================================"
+
+            for TREE in glinet jiay blogic; do
+              echo
+              echo "----- $TREE -----"
+              git -C "$TREE" log \
+                --all \
+                --oneline \
+                --regexp-ignore-case \
+                --grep='YT9224\|YT922X\|YT921X\|YT8824' \
+                -n 150 || true
+            done
+
+            echo
+            echo "============================================================"
+            echo "YT9224 / YT922X FILE REFERENCES"
+            echo "============================================================"
+
+            for TREE in glinet jiay blogic; do
+              echo
+              echo "----- $TREE -----"
+
+              grep -RniE \
+                'YT9224|YT922X|YT921X|YT8824' \
+                "$TREE/target/linux/mediatek" \
+                "$TREE/package" \
+                2>/dev/null | head -500 || true
+            done
+
+            echo
+            echo "============================================================"
+            echo "DSA TAG IMPLEMENTATION"
+            echo "============================================================"
+
+            for TREE in glinet jiay blogic; do
+              echo
+              echo "----- $TREE -----"
+
+              grep -RniE \
+                'TAG_LEN|TAG_PROTO_YT|DSA_TAG_PROTO_YT|tag_yt922|tag_yt921|four.byte|eight.byte' \
+                "$TREE/target/linux/mediatek" \
+                "$TREE/package" \
+                2>/dev/null | head -500 || true
+            done
+
+            echo
+            echo "============================================================"
+            echo "PPE / HARDWARE FLOW OFFLOAD"
+            echo "============================================================"
+
+            for TREE in glinet jiay blogic; do
+              echo
+              echo "----- $TREE -----"
+
+              grep -RniE \
+                'mtk_ppe|PPE|ppe_num|flow_offload|FLOW_OFFLOAD|hardware.*offload|offload.*hardware' \
+                "$TREE/target/linux/mediatek" \
+                2>/dev/null | \
+                grep -Ei 'yt92|dsa|tag|mediatek|ppe|offload' | \
+                head -700 || true
+            done
+
+            echo
+            echo "============================================================"
+            echo "DSA BRIDGE HARDWARE OFFLOAD"
+            echo "============================================================"
+
+            for TREE in glinet jiay blogic; do
+              echo
+              echo "----- $TREE -----"
+
+              grep -RniE \
+                'port_bridge_join|port_bridge_leave|bridge_join|bridge_leave|bridge_offload|offload_fwd_mark' \
+                "$TREE/target/linux/mediatek" \
+                2>/dev/null | \
+                grep -Ei 'yt92|motorcomm|dsa' | \
+                head -500 || true
+            done
+
+            echo
+            echo "============================================================"
+            echo "FDB OFFLOAD"
+            echo "============================================================"
+
+            for TREE in glinet jiay blogic; do
+              echo
+              echo "----- $TREE -----"
+
+              grep -RniE \
+                'port_fdb_add|port_fdb_del|fdb_add|fdb_del|fast_age' \
+                "$TREE/target/linux/mediatek" \
+                2>/dev/null | \
+                grep -Ei 'yt92|motorcomm|dsa' | \
+                head -500 || true
+            done
+
+            echo
+            echo "============================================================"
+            echo "MDB / MULTICAST / SNOOPING OFFLOAD"
+            echo "============================================================"
+
+            for TREE in glinet jiay blogic; do
+              echo
+              echo "----- $TREE -----"
+
+              grep -RniE \
+                'port_mdb_add|port_mdb_del|mdb_add|mdb_del|multicast|snooping' \
+                "$TREE/target/linux/mediatek" \
+                2>/dev/null | \
+                grep -Ei 'yt92|motorcomm|dsa' | \
+                head -700 || true
+            done
+
+            echo
+            echo "============================================================"
+            echo "MTK TX CHECKSUM / GSO HANDLING"
+            echo "============================================================"
+
+            for TREE in glinet jiay blogic; do
+              echo
+              echo "----- $TREE -----"
+
+              grep -RniE \
+                'checksum|NETIF_F_GSO|GSO|NETIF_F_IP_CSUM|NETIF_F_IPV6_CSUM|features_check' \
+                "$TREE/target/linux/mediatek" \
+                2>/dev/null | \
+                grep -Ei 'yt92|dsa|tag' | \
+                head -500 || true
+            done
+
+            echo
+            echo "============================================================"
+            echo "10G CPU LINK / USXGMII"
+            echo "============================================================"
+
+            for TREE in glinet jiay blogic; do
+              echo
+              echo "----- $TREE -----"
+
+              grep -RniE \
+                'USXGMII|10GBASE-R|10000base|SPEED_10000|fixed.*10G|10G.*fixed' \
+                "$TREE/target/linux/mediatek" \
+                2>/dev/null | \
+                grep -Ei 'yt92|be14000|switch|pcs|usxgmii' | \
+                head -500 || true
+            done
+
+            echo
+            echo "============================================================"
+            echo "WED / MT7996"
+            echo "============================================================"
+
+            for TREE in glinet jiay blogic; do
+              echo
+              echo "----- $TREE -----"
+
+              grep -RniE \
+                'mediatek,wed|mtk_wed|WED|mt7996' \
+                "$TREE/target/linux/mediatek" \
+                "$TREE/package" \
+                2>/dev/null | head -600 || true
+            done
+
+            echo
+            echo "============================================================"
+            echo "MAC ADDRESS HANDLING"
+            echo "============================================================"
+
+            for TREE in glinet jiay blogic; do
+              echo
+              echo "----- $TREE -----"
+
+              grep -RniE \
+                'mac-address|macaddr|label_mac|label-mac|factory.*mac|device_mac|ethaddr' \
+                "$TREE/target/linux/mediatek" \
+                2>/dev/null | \
+                grep -Ei 'be14000|glinet|02_network|factory' | \
+                head -500 || true
+            done
+
+            echo
+            echo "============================================================"
+            echo "TOUCHSCREEN / CST353X"
+            echo "============================================================"
+
+            for TREE in glinet jiay blogic; do
+              echo
+              echo "----- $TREE -----"
+
+              grep -RniE \
+                'CST353|cst353|touchscreen' \
+                "$TREE/target/linux/mediatek" \
+                "$TREE/package" \
+                2>/dev/null | \
+                grep -Ei 'be14000|cst353|glinet' | \
+                head -500 || true
+            done
+
+            echo
+            echo "============================================================"
+            echo "BE14000 DTS - IMPORTANT NETWORK LINES"
+            echo "============================================================"
+
+            for TREE in glinet jiay blogic; do
+              echo
+              echo "----- $TREE -----"
+
+              DTS=$(find "$TREE/target/linux/mediatek" \
+                -type f \
+                -iname '*be14000*.dts' \
+                2>/dev/null | head -1)
+
+              if [ -n "${DTS:-}" ]; then
+                echo "DTS: $DTS"
+
+                grep -nEi \
+                  'ethernet|switch|dsa|phy-mode|managed|fixed-link|speed|tag|mac-address|nvmem|factory|sfp|wan|lan|yt92|yt88|reset|interrupt' \
+                  "$DTS" || true
+              else
+                echo "NO BE14000 DTS FOUND"
+              fi
+            done
+
+            echo
+            echo "============================================================"
+            echo "BRIDGER"
+            echo "============================================================"
+
+            for TREE in glinet jiay blogic; do
+              echo
+              echo "----- $TREE -----"
+
+              find "$TREE/package" \
+                -type f \
+                -path '*bridger*' \
+                -print 2>/dev/null || true
+
+              grep -RniE \
+                'nl_report|netlink.*error|report.*netlink|bridger' \
+                "$TREE/package/network/services/bridger" \
+                2>/dev/null | head -300 || true
+            done
+
+          } | tee "$REPORT"
+
+      - name: Feature summary
+        run: |
+          set -euo pipefail
+
+          echo "========================================"
+          echo "QUICK FEATURE SUMMARY"
+          echo "========================================"
+
+          for TREE in glinet jiay blogic; do
+            echo
+            echo "############ $TREE ############"
+
+            if grep -RqiE 'YT9224' "$TREE/target/linux/mediatek" 2>/dev/null; then
+              echo "YT9224 support:             PRESENT"
+            else
+              echo "YT9224 support:             NOT FOUND"
+            fi
+
+            if grep -RqiE 'YT922X_TAG_LEN.*4|TAG_LEN.*4' "$TREE/target/linux/mediatek" 2>/dev/null; then
+              echo "4-byte YT922x tag:          FOUND"
+            else
+              echo "4-byte YT922x tag:          NOT FOUND"
+            fi
+
+            if grep -RqiE 'YT922X_TAG_LEN.*8|YT921X_TAG_LEN.*8|TAG_LEN.*8' "$TREE/target/linux/mediatek" 2>/dev/null; then
+              echo "8-byte YT92xx tag:          FOUND"
+            else
+              echo "8-byte YT92xx tag:          NOT FOUND"
+            fi
+
+            if grep -RqiE 'port_bridge_join|bridge_offload' "$TREE/target/linux/mediatek" 2>/dev/null; then
+              echo "DSA bridge callbacks:       FOUND"
+            else
+              echo "DSA bridge callbacks:       NOT FOUND"
+            fi
+
+            if grep -RqiE 'port_fdb_add|port_fdb_del' "$TREE/target/linux/mediatek" 2>/dev/null; then
+              echo "FDB callbacks:              FOUND"
+            else
+              echo "FDB callbacks:              NOT FOUND"
+            fi
+
+            if grep -RqiE 'port_mdb_add|port_mdb_del' "$TREE/target/linux/mediatek" 2>/dev/null; then
+              echo "MDB callbacks:              FOUND"
+            else
+              echo "MDB callbacks:              NOT FOUND"
+            fi
+
+            if grep -RqiE 'mediatek,wed|mtk_wed' "$TREE/target/linux/mediatek" 2>/dev/null; then
+              echo "MediaTek WED:               FOUND"
+            else
+              echo "MediaTek WED:               NOT FOUND"
+            fi
+
+            if grep -RqiE 'CST353|cst353' \
+              "$TREE/target/linux/mediatek" \
+              "$TREE/package" 2>/dev/null; then
+              echo "CST353X touchscreen:        FOUND"
+            else
+              echo "CST353X touchscreen:        NOT FOUND"
+            fi
+          done
+
+      - name: Upload comparison report
+        uses: actions/upload-artifact@v4
+        with:
+          name: flint4-tree-comparison
+          path: flint4-comparison.txt
+          retention-days: 14
