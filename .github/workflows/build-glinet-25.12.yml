@@ -11,11 +11,20 @@ jobs:
       - name: Maximize build space
         uses: easimon/maximize-build-space@master
         with:
-          root-reserve-mb: 8192
-          swap-size-mb: 4096
+          root-reserve-mb: 2048
+          swap-size-mb: 1024
           remove-dotnet: 'true'
           remove-android: 'true'
           remove-haskell: 'true'
+          remove-codeql: 'true'
+          remove-docker-images: 'true'
+
+      - name: Show available disk space
+        run: |
+          echo "========================================"
+          echo "DISK SPACE"
+          echo "========================================"
+          df -h
 
       - name: Install build dependencies
         run: |
@@ -45,6 +54,12 @@ jobs:
             curl \
             jq \
             time
+
+          echo
+          echo "========================================"
+          echo "DISK SPACE AFTER DEPENDENCIES"
+          echo "========================================"
+          df -h
 
       - name: Clone GL.iNet OpenWrt 25.12
         run: |
@@ -128,6 +143,14 @@ jobs:
             'KERNEL_PATCHVER|KERNEL_TESTING_PATCHVER' \
             target/linux/mediatek/Makefile || true
 
+          echo
+          echo "========================================"
+          echo "BE14000 DEVICE PACKAGES"
+          echo "========================================"
+
+          sed -n '/define Device\/glinet_gl-be14000/,/TARGET_DEVICES.*glinet_gl-be14000/p' \
+            target/linux/mediatek/image/filogic.mk || true
+
       - name: Download sources
         run: |
           set -euo pipefail
@@ -135,11 +158,13 @@ jobs:
 
           make download -j"$(nproc)"
 
-          echo "========================================"
-          echo "CHECKING DOWNLOADS"
-          echo "========================================"
-
           find dl -size -1024c -print -delete || true
+
+          echo
+          echo "========================================"
+          echo "DISK SPACE AFTER DOWNLOAD"
+          echo "========================================"
+          df -h
 
       - name: Build GL-BE14000
         run: |
@@ -174,6 +199,12 @@ jobs:
             -type f \
             -printf '%f  %s bytes\n' \
             2>/dev/null || true
+
+          echo
+          echo "========================================"
+          echo "FINAL DISK SPACE"
+          echo "========================================"
+          df -h
 
       - name: Collect GL-BE14000 firmware
         if: success()
