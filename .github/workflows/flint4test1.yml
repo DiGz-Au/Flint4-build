@@ -407,7 +407,7 @@ jobs:
           echo "========================================"
 
           grep -F \
-            'nvmem-cells = <&macaddr_ethernet 1>;' \
+            'nvmem-cells = <&macaddr_ethernet 2>;' \
             target/linux/mediatek/dts/mt7988a-glinet-gl-be14000.dts
 
           grep -n -A8 \
