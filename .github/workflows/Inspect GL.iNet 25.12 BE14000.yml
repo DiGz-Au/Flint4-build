@@ -1,0 +1,150 @@
+name: Inspect GL.iNet 25.12 BE14000
+
+on:
+  workflow_dispatch:
+
+jobs:
+  inspect:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Clone GL.iNet OpenWrt 25.12
+        run: |
+          set -euo pipefail
+
+          git clone \
+            --branch openwrt-25.12 \
+            --single-branch \
+            https://github.com/gl-inet/gl-openwrt.git \
+            gl-openwrt
+
+          cd gl-openwrt
+
+          echo "========================================"
+          echo "GL.iNet BASELINE"
+          echo "========================================"
+
+          git log -1 --oneline
+          git branch --show-current
+
+      - name: Find GL-BE14000 support
+        run: |
+          cd gl-openwrt
+
+          echo "========================================"
+          echo "GL-BE14000 REFERENCES"
+          echo "========================================"
+
+          grep -RniE \
+            'GL-BE14000|gl-be14000|be14000' \
+            target/linux/mediatek \
+            package \
+            2>/dev/null || true
+
+      - name: Find BE14000 commits
+        run: |
+          cd gl-openwrt
+
+          echo "========================================"
+          echo "GL-BE14000 COMMIT HISTORY"
+          echo "========================================"
+
+          git log \
+            --oneline \
+            --all \
+            --regexp-ignore-case \
+            --grep='BE14000\|GL-BE14000\|Flint 4' \
+            || true
+
+      - name: Find BE14000 files
+        run: |
+          cd gl-openwrt
+
+          echo "========================================"
+          echo "GL-BE14000 FILES"
+          echo "========================================"
+
+          find target/linux/mediatek \
+            \( -iname '*be14000*' -o -iname '*glinet*' \) \
+            -print \
+            2>/dev/null || true
+
+      - name: Inspect YT9224 and YT8824
+        run: |
+          cd gl-openwrt
+
+          echo "========================================"
+          echo "YT9224 / YT8824"
+          echo "========================================"
+
+          grep -RniE \
+            'yt922|yt921|yt8824' \
+            target/linux/mediatek \
+            2>/dev/null | head -300 || true
+
+      - name: Inspect MediaTek PPE and hardware offload
+        run: |
+          cd gl-openwrt
+
+          echo "========================================"
+          echo "PPE / HARDWARE OFFLOAD"
+          echo "========================================"
+
+          grep -RniE \
+            'ppe|flow.?offload|hardware.?offload' \
+            target/linux/mediatek \
+            2>/dev/null | head -300 || true
+
+      - name: Inspect MT7996 and WED
+        run: |
+          cd gl-openwrt
+
+          echo "========================================"
+          echo "MT7996 / WED"
+          echo "========================================"
+
+          grep -RniE \
+            'mt7996|mtk_wed|wed' \
+            target/linux/mediatek \
+            2>/dev/null | head -300 || true
+
+      - name: Show BE14000 DTS
+        run: |
+          cd gl-openwrt
+
+          echo "========================================"
+          echo "BE14000 DTS CONTENT"
+          echo "========================================"
+
+          DTS=$(find target/linux/mediatek \
+            -type f \
+            \( -iname '*be14000*.dts' -o -iname '*be14000*.dtsi' \) \
+            2>/dev/null)
+
+          if [ -z "$DTS" ]; then
+            echo "No BE14000 DTS/DTSI found."
+          else
+            for file in $DTS; do
+              echo
+              echo "========================================"
+              echo "FILE: $file"
+              echo "========================================"
+              cat "$file"
+            done
+          fi
+
+      - name: Summary
+        run: |
+          cd gl-openwrt
+
+          echo "========================================"
+          echo "INSPECTION COMPLETE"
+          echo "========================================"
+          echo "Branch:"
+          git branch --show-current
+          echo
+          echo "HEAD:"
+          git log -1 --oneline
+          echo
+          echo "Kernel:"
+          grep 'KERNEL_PATCHVER' target/linux/mediatek/Makefile || true
