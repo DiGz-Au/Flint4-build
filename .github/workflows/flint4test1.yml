@@ -170,7 +170,7 @@ jobs:
 
           s = p.read_text()
 
-          expected = 'nvmem-cells = <&macaddr_ethernet 1>;'
+          expected = 'nvmem-cells = <&macaddr_ethernet 2>;'
 
           if expected in s:
               print("GMAC1 factory MAC fix already present.")
@@ -181,7 +181,7 @@ jobs:
           """
 
           new = """&gmac1 {
-          	nvmem-cells = <&macaddr_ethernet 1>;
+          	nvmem-cells = <&macaddr_ethernet 2>;
           	nvmem-cell-names = "mac-address";
           	phy-mode = "usxgmii";
           """
