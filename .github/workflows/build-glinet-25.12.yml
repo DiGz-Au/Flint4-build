@@ -31,6 +31,7 @@ jobs:
           set -euo pipefail
 
           sudo apt-get update
+
           sudo apt-get install -y \
             build-essential \
             clang \
@@ -65,25 +66,34 @@ jobs:
         run: |
           set -euo pipefail
 
+          echo "========================================"
+          echo "CLONING GL.iNet OPENWRT 25.12"
+          echo "========================================"
+
           git clone \
             --branch openwrt-25.12 \
             --single-branch \
             https://github.com/gl-inet/gl-openwrt.git \
-            openwrt
+            gl-openwrt
 
-          cd openwrt
+          cd gl-openwrt
 
+          echo
           echo "========================================"
           echo "GL.iNet OPENWRT BASELINE"
           echo "========================================"
 
-          git log -1 --oneline
+          echo "Branch:"
           git branch --show-current
+
+          echo
+          echo "HEAD:"
+          git log -1 --oneline
 
       - name: Show GL.iNet BE14000 build documentation
         run: |
           set -euo pipefail
-          cd openwrt
+          cd gl-openwrt
 
           echo "========================================"
           echo "BE14000 REPRODUCIBLE BUILD COMMIT"
@@ -101,15 +111,29 @@ jobs:
       - name: Update and install feeds
         run: |
           set -euo pipefail
-          cd openwrt
+          cd gl-openwrt
+
+          echo "========================================"
+          echo "UPDATING FEEDS"
+          echo "========================================"
 
           ./scripts/feeds update -a
+
+          echo
+          echo "========================================"
+          echo "INSTALLING FEEDS"
+          echo "========================================"
+
           ./scripts/feeds install -a
 
       - name: Configure GL-BE14000
         run: |
           set -euo pipefail
-          cd openwrt
+          cd gl-openwrt
+
+          echo "========================================"
+          echo "CONFIGURING GL-BE14000"
+          echo "========================================"
 
           cat > .config <<'EOF'
           CONFIG_TARGET_mediatek=y
@@ -126,6 +150,7 @@ jobs:
 
           make defconfig
 
+          echo
           echo "========================================"
           echo "VERIFY GL-BE14000 CONFIG"
           echo "========================================"
@@ -145,37 +170,95 @@ jobs:
 
           echo
           echo "========================================"
-          echo "BE14000 DEVICE PACKAGES"
+          echo "BE14000 DEVICE DEFINITION"
           echo "========================================"
 
-          sed -n '/define Device\/glinet_gl-be14000/,/TARGET_DEVICES.*glinet_gl-be14000/p' \
+          sed -n \
+            '/define Device\/glinet_gl-be14000/,/TARGET_DEVICES.*glinet_gl-be14000/p' \
             target/linux/mediatek/image/filogic.mk || true
+
+      - name: Verify BE14000 hardware support
+        run: |
+          set -euo pipefail
+          cd gl-openwrt
+
+          echo "========================================"
+          echo "BE14000 DTS"
+          echo "========================================"
+
+          ls -lh \
+            target/linux/mediatek/dts/mt7988a-glinet-gl-be14000.dts
+
+          echo
+          echo "========================================"
+          echo "YT922x / YT921x SUPPORT"
+          echo "========================================"
+
+          find target/linux/mediatek \
+            -type f \
+            | grep -Ei 'yt922|yt921' || true
+
+          echo
+          echo "========================================"
+          echo "MOTORCOMM / OFFLOAD PATCHES"
+          echo "========================================"
+
+          grep -RniE \
+            'YT922|YT921|hardware.*offload|flow.*offload|PPE' \
+            target/linux/mediatek/patches-6.12 \
+            2>/dev/null \
+            | head -200 || true
+
+          echo
+          echo "========================================"
+          echo "WED SUPPORT"
+          echo "========================================"
+
+          grep -RniE \
+            'mt7988.*wed|mediatek,wed|mt7996.*wed' \
+            target/linux/mediatek \
+            2>/dev/null \
+            | head -100 || true
 
       - name: Download sources
         run: |
           set -euo pipefail
-          cd openwrt
+          cd gl-openwrt
+
+          echo "========================================"
+          echo "DOWNLOADING SOURCES"
+          echo "========================================"
 
           make download -j"$(nproc)"
 
+          echo
+          echo "Removing broken/incomplete downloads..."
           find dl -size -1024c -print -delete || true
 
           echo
           echo "========================================"
           echo "DISK SPACE AFTER DOWNLOAD"
           echo "========================================"
+
           df -h
 
       - name: Build GL-BE14000
         run: |
           set -euo pipefail
-          cd openwrt
+          cd gl-openwrt
 
           echo "========================================"
           echo "BUILDING GL.iNet GL-BE14000"
           echo "========================================"
 
-          make -j"$(nproc)" V=s || {
+          echo "CPU threads:"
+          nproc
+
+          echo
+          echo "Starting parallel build..."
+
+          if ! make -j"$(nproc)" V=s; then
+
             echo
             echo "========================================"
             echo "PARALLEL BUILD FAILED"
@@ -183,12 +266,13 @@ jobs:
             echo "========================================"
 
             make -j1 V=s
-          }
+
+          fi
 
       - name: Show generated images
         if: always()
         run: |
-          cd openwrt
+          cd gl-openwrt
 
           echo "========================================"
           echo "GENERATED IMAGES"
@@ -204,6 +288,7 @@ jobs:
           echo "========================================"
           echo "FINAL DISK SPACE"
           echo "========================================"
+
           df -h
 
       - name: Collect GL-BE14000 firmware
@@ -213,15 +298,19 @@ jobs:
 
           mkdir -p firmware
 
-          find openwrt/bin/targets/mediatek/filogic \
+          echo "========================================"
+          echo "COLLECTING GL-BE14000 FILES"
+          echo "========================================"
+
+          find gl-openwrt/bin/targets/mediatek/filogic \
             -maxdepth 1 \
             -type f \
             -iname '*gl-be14000*' \
             -exec cp -v {} firmware/ \;
 
-          if [ -f openwrt/bin/targets/mediatek/filogic/sha256sums ]; then
+          if [ -f gl-openwrt/bin/targets/mediatek/filogic/sha256sums ]; then
             cp -v \
-              openwrt/bin/targets/mediatek/filogic/sha256sums \
+              gl-openwrt/bin/targets/mediatek/filogic/sha256sums \
               firmware/
           fi
 
