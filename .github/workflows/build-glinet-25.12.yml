@@ -8,21 +8,35 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-      - name: Maximize build space
-        uses: easimon/maximize-build-space@master
-        with:
-          root-reserve-mb: 2048
-          swap-size-mb: 1024
-          remove-dotnet: 'true'
-          remove-android: 'true'
-          remove-haskell: 'true'
-          remove-codeql: 'true'
-          remove-docker-images: 'true'
-
-      - name: Show available disk space
+      - name: Free disk space
         run: |
+          set -euo pipefail
+
           echo "========================================"
-          echo "DISK SPACE"
+          echo "DISK BEFORE CLEANUP"
+          echo "========================================"
+          df -h
+
+          echo
+          echo "========================================"
+          echo "REMOVING UNUSED RUNNER SOFTWARE"
+          echo "========================================"
+
+          sudo rm -rf /usr/local/lib/android || true
+          sudo rm -rf /usr/share/dotnet || true
+          sudo rm -rf /opt/ghc || true
+          sudo rm -rf /usr/local/.ghcup || true
+          sudo rm -rf /opt/hostedtoolcache/CodeQL || true
+          sudo rm -rf /usr/local/share/boost || true
+
+          sudo docker image prune --all --force || true
+
+          sudo apt-get clean
+          sudo rm -rf /var/lib/apt/lists/*
+
+          echo
+          echo "========================================"
+          echo "DISK AFTER CLEANUP"
           echo "========================================"
           df -h
 
@@ -56,9 +70,12 @@ jobs:
             jq \
             time
 
+          sudo apt-get clean
+          sudo rm -rf /var/lib/apt/lists/*
+
           echo
           echo "========================================"
-          echo "DISK SPACE AFTER DEPENDENCIES"
+          echo "DISK AFTER DEPENDENCIES"
           echo "========================================"
           df -h
 
@@ -71,6 +88,7 @@ jobs:
           echo "========================================"
 
           git clone \
+            --depth 1 \
             --branch openwrt-25.12 \
             --single-branch \
             https://github.com/gl-inet/gl-openwrt.git \
@@ -90,23 +108,9 @@ jobs:
           echo "HEAD:"
           git log -1 --oneline
 
-      - name: Show GL.iNet BE14000 build documentation
-        run: |
-          set -euo pipefail
-          cd gl-openwrt
-
-          echo "========================================"
-          echo "BE14000 REPRODUCIBLE BUILD COMMIT"
-          echo "========================================"
-
-          git show --stat 7e511eb229 || true
-
           echo
-          echo "========================================"
-          echo "FULL COMMIT"
-          echo "========================================"
-
-          git show --format=fuller 7e511eb229 || true
+          echo "Repository size:"
+          du -sh .
 
       - name: Update and install feeds
         run: |
@@ -126,6 +130,14 @@ jobs:
 
           ./scripts/feeds install -a
 
+          echo
+          echo "========================================"
+          echo "DISK AFTER FEEDS"
+          echo "========================================"
+
+          df -h
+          du -sh . || true
+
       - name: Configure GL-BE14000
         run: |
           set -euo pipefail
@@ -139,10 +151,8 @@ jobs:
           CONFIG_TARGET_mediatek=y
           CONFIG_TARGET_mediatek_filogic=y
           CONFIG_TARGET_mediatek_filogic_DEVICE_glinet_gl-be14000=y
-
           CONFIG_PACKAGE_luci=y
           CONFIG_PACKAGE_luci-ssl=y
-
           CONFIG_PACKAGE_htop=y
           CONFIG_PACKAGE_ethtool=y
           CONFIG_PACKAGE_iperf3=y
@@ -200,7 +210,7 @@ jobs:
 
           echo
           echo "========================================"
-          echo "MOTORCOMM / OFFLOAD PATCHES"
+          echo "MOTORCOMM / PPE / OFFLOAD"
           echo "========================================"
 
           grep -RniE \
@@ -232,15 +242,23 @@ jobs:
           make download -j"$(nproc)"
 
           echo
-          echo "Removing broken/incomplete downloads..."
+          echo "Removing incomplete downloads..."
           find dl -size -1024c -print -delete || true
 
           echo
           echo "========================================"
-          echo "DISK SPACE AFTER DOWNLOAD"
+          echo "DISK AFTER DOWNLOAD"
           echo "========================================"
 
           df -h
+
+          echo
+          echo "OpenWrt tree:"
+          du -sh .
+
+          echo
+          echo "Download directory:"
+          du -sh dl || true
 
       - name: Build GL-BE14000
         run: |
@@ -251,18 +269,21 @@ jobs:
           echo "BUILDING GL.iNet GL-BE14000"
           echo "========================================"
 
-          echo "CPU threads:"
-          nproc
+          echo "CPU threads: $(nproc)"
 
           echo
-          echo "Starting parallel build..."
+          echo "Disk before build:"
+          df -h
 
-          if ! make -j"$(nproc)" V=s; then
+          echo
+          echo "Starting normal parallel build..."
+
+          if ! make -j"$(nproc)"; then
 
             echo
             echo "========================================"
             echo "PARALLEL BUILD FAILED"
-            echo "RETRYING SINGLE-THREADED"
+            echo "RETRYING SINGLE-THREADED WITH V=s"
             echo "========================================"
 
             make -j1 V=s
@@ -272,17 +293,22 @@ jobs:
       - name: Show generated images
         if: always()
         run: |
-          cd gl-openwrt
-
           echo "========================================"
           echo "GENERATED IMAGES"
           echo "========================================"
 
-          find bin/targets/mediatek/filogic \
-            -maxdepth 1 \
-            -type f \
-            -printf '%f  %s bytes\n' \
-            2>/dev/null || true
+          if [ -d gl-openwrt/bin/targets/mediatek/filogic ]; then
+
+            find gl-openwrt/bin/targets/mediatek/filogic \
+              -maxdepth 1 \
+              -type f \
+              -printf '%f  %s bytes\n'
+
+          else
+
+            echo "No filogic output directory found."
+
+          fi
 
           echo
           echo "========================================"
@@ -290,6 +316,18 @@ jobs:
           echo "========================================"
 
           df -h
+
+          echo
+          echo "========================================"
+          echo "LARGEST OPENWRT DIRECTORIES"
+          echo "========================================"
+
+          du -h \
+            --max-depth=1 \
+            gl-openwrt \
+            2>/dev/null \
+            | sort -h \
+            | tail -20 || true
 
       - name: Collect GL-BE14000 firmware
         if: success()
@@ -309,9 +347,11 @@ jobs:
             -exec cp -v {} firmware/ \;
 
           if [ -f gl-openwrt/bin/targets/mediatek/filogic/sha256sums ]; then
+
             cp -v \
               gl-openwrt/bin/targets/mediatek/filogic/sha256sums \
               firmware/
+
           fi
 
           echo
@@ -329,6 +369,7 @@ jobs:
 
             echo "ERROR: No GL-BE14000 firmware image found."
             exit 1
+
           fi
 
       - name: Upload GL-BE14000 firmware
