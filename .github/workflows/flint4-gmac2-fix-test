@@ -170,12 +170,6 @@ jobs:
 
           s = p.read_text()
 
-          expected = 'nvmem-cells = <&macaddr_ethernet 2>;'
-
-          if expected in s:
-              print("GMAC1 factory MAC fix already present.")
-              raise SystemExit(0)
-
           old = """&gmac1 {
           	phy-mode = "usxgmii";
           """
@@ -185,6 +179,10 @@ jobs:
           	nvmem-cell-names = "mac-address";
           	phy-mode = "usxgmii";
           """
+
+          if new in s:
+              print("GMAC1 factory MAC fix already present.")
+              raise SystemExit(0)
 
           if old not in s:
               raise SystemExit(
@@ -221,9 +219,9 @@ jobs:
             "$DTS"
 
           # GMAC1 must use factory Ethernet MAC base + 2
-          grep -F \
-            'nvmem-cells = <&macaddr_ethernet 2>;' \
-            "$DTS"
+          sed -n '/^&gmac1 {/,/^};/p' "$DTS" | \
+            grep -F \
+              'nvmem-cells = <&macaddr_ethernet 2>;'
 
           echo
           echo "========================================"
@@ -328,6 +326,13 @@ jobs:
           CONFIG_TARGET_MULTI_PROFILE=y
           CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_glinet_gl-be14000=y
 
+          # Runtime APK repositories
+          CONFIG_VERSION_REPO="https://downloads.openwrt.org/snapshots"
+
+          # Keep the BLogic feed available only while building the panel UI.
+          # OpenWrt does not publish a runtime blogic/packages.adb repository.
+          # CONFIG_FEED_blogic is not set
+
           # Standard LuCI
           CONFIG_PACKAGE_luci=y
           CONFIG_PACKAGE_luci-ssl=y
@@ -381,6 +386,19 @@ jobs:
 
           echo
           echo "========================================"
+          echo "RUNTIME APK REPOSITORIES"
+          echo "========================================"
+
+          grep -F \
+            'CONFIG_VERSION_REPO="https://downloads.openwrt.org/snapshots"' \
+            .config
+
+          grep -F \
+            '# CONFIG_FEED_blogic is not set' \
+            .config
+
+          echo
+          echo "========================================"
           echo "RTL8261C FIX"
           echo "========================================"
 
@@ -406,9 +424,11 @@ jobs:
           echo "GMAC1 FACTORY MAC"
           echo "========================================"
 
-          grep -F \
-            'nvmem-cells = <&macaddr_ethernet 2>;' \
-            target/linux/mediatek/dts/mt7988a-glinet-gl-be14000.dts
+          sed -n \
+            '/^&gmac1 {/,/^};/p' \
+            target/linux/mediatek/dts/mt7988a-glinet-gl-be14000.dts | \
+            grep -F \
+              'nvmem-cells = <&macaddr_ethernet 2>;'
 
           grep -n -A8 \
             '^&gmac1' \
@@ -435,6 +455,41 @@ jobs:
           echo "Building on $(nproc) cores..."
 
           make -j$(nproc) || make -j1 V=s
+
+      # ============================================================
+      # Verify Runtime APK Repositories
+      # ============================================================
+      - name: Verify Runtime APK Repositories
+        run: |
+          set -euo pipefail
+          cd openwrt
+
+          mapfile -t REPO_FILES < <(
+            find build_dir staging_dir \
+              -type f \
+              -path '*/etc/apk/repositories.d/distfeeds.list' \
+              -print
+          )
+
+          if [ "${#REPO_FILES[@]}" -eq 0 ]; then
+            echo "ERROR: Generated APK distfeeds.list was not found."
+            exit 1
+          fi
+
+          for repo_file in "${REPO_FILES[@]}"; do
+            echo
+            echo "===== $repo_file ====="
+            cat "$repo_file"
+
+            grep -Fq \
+              'https://downloads.openwrt.org/snapshots/' \
+              "$repo_file"
+
+            if grep -Fiq '/blogic/' "$repo_file"; then
+              echo "ERROR: BLogic was emitted as a runtime APK repository."
+              exit 1
+            fi
+          done
 
       # ============================================================
       # Prepare Artifacts
