@@ -389,13 +389,18 @@ jobs:
           echo "RUNTIME APK REPOSITORIES"
           echo "========================================"
 
-          grep -F \
-            'CONFIG_VERSION_REPO="https://downloads.openwrt.org/snapshots"' \
-            .config
+          if grep -q '^CONFIG_VERSION_REPO=' .config; then
+            grep '^CONFIG_VERSION_REPO=' .config
+          else
+            echo "CONFIG_VERSION_REPO uses the OpenWrt default snapshots URL"
+          fi
 
-          grep -F \
-            '# CONFIG_FEED_blogic is not set' \
-            .config
+          if grep -q '^CONFIG_FEED_blogic=y' .config; then
+            echo "ERROR: BLogic was enabled as a runtime APK repository"
+            exit 1
+          else
+            echo "BLogic runtime APK repository is disabled"
+          fi
 
           echo
           echo "========================================"
