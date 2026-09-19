@@ -1,11 +1,11 @@
-name: Flint 4 mac fix
+name: Flint 4 MAC Fix + Blogic feed remove from APK.
 
 on:
   workflow_dispatch:
 
 jobs:
   build:
-    name: Build GL-BE14000 OpenWrt with Panel UI + YT9224 + SQM
+    name: Build GL-BE14000 OpenWrt with Panel UI + YT9224 + SQM + GMAC Fix
     runs-on: ubuntu-22.04
 
     steps:
@@ -102,55 +102,18 @@ jobs:
 
           BLOGIC_REPO="https://github.com/blogic/openwrt.git"
 
-          BRIDGE_COMMIT="b1e81abd32ed4369fc1d413b5c33b6ce8ca5a3eb"
           RTL8261C_COMMIT="965af1a746277d281d8f0277de32d4ad73152c6d"
           PRODUCTION_DT_COMMIT="8fe7ba853d28cbb9f8a9e104d3fcde960fd96dae"
 
-          BRIDGE_PATCH="target/linux/mediatek/patches-6.18/967-42-net-dsa-yt922x-add-hardware-bridge-offload.patch"
           RTL_PATCH="target/linux/generic/pending-6.18/744-net-phy-realtek-fix-RTL8261C-firmware-probe.patch"
           DTS="target/linux/mediatek/dts/mt7988a-glinet-gl-be14000.dts"
 
           echo "========================================"
-          echo "FETCHING MISSING FLINT 4 COMMITS"
+          echo "FETCHING MISSING FLINT 4 FIXES"
           echo "========================================"
 
-          git fetch --no-tags "$BLOGIC_REPO" "$BRIDGE_COMMIT"
           git fetch --no-tags "$BLOGIC_REPO" "$RTL8261C_COMMIT"
           git fetch --no-tags "$BLOGIC_REPO" "$PRODUCTION_DT_COMMIT"
-
-          echo
-          echo "========================================"
-          echo "YT9224 HARDWARE BRIDGE OFFLOAD"
-          echo "========================================"
-
-          echo "Installing exact bridge-offload patch from Blogic:"
-          git show -s --format='%H %s' "$BRIDGE_COMMIT"
-
-          echo
-          echo "Checking patch exists inside commit..."
-
-          git cat-file -e "${BRIDGE_COMMIT}:${BRIDGE_PATCH}"
-
-          echo "Replacing existing 967-42 with Blogic version..."
-
-          git show \
-            "${BRIDGE_COMMIT}:${BRIDGE_PATCH}" \
-            > "$BRIDGE_PATCH"
-
-          echo
-          echo "Bridge patch installed:"
-          ls -lh "$BRIDGE_PATCH"
-
-          echo
-          echo "SHA256:"
-          sha256sum "$BRIDGE_PATCH"
-
-          echo
-          echo "Bridge functions:"
-          grep -n 'yt922x_dsa_port_bridge_join' "$BRIDGE_PATCH"
-
-          echo
-          echo "YT9224 hardware bridge-offload patch ready."
 
           echo
           echo "========================================"
@@ -207,7 +170,7 @@ jobs:
 
           s = p.read_text()
 
-          expected = 'nvmem-cells = <&macaddr_ethernet 1>;'
+          expected = 'nvmem-cells = <&macaddr_ethernet 2>;'
 
           if expected in s:
               print("GMAC1 factory MAC fix already present.")
@@ -218,7 +181,7 @@ jobs:
           """
 
           new = """&gmac1 {
-          	nvmem-cells = <&macaddr_ethernet 1>;
+          	nvmem-cells = <&macaddr_ethernet 2>;
           	nvmem-cell-names = "mac-address";
           	phy-mode = "usxgmii";
           """
@@ -239,12 +202,6 @@ jobs:
           echo "VERIFY APPLIED FIXES"
           echo "========================================"
 
-          test -s "$BRIDGE_PATCH"
-
-          grep -Fq \
-            'yt922x_dsa_port_bridge_join' \
-            "$BRIDGE_PATCH"
-
           test -f "$RTL_PATCH"
 
           grep -F \
@@ -263,9 +220,9 @@ jobs:
             'touchscreen-inverted-y;' \
             "$DTS"
 
-          # GMAC1 must use factory Ethernet MAC base + 1
+          # GMAC1 must use factory Ethernet MAC base + 2
           grep -F \
-            'nvmem-cells = <&macaddr_ethernet 1>;' \
+            'nvmem-cells = <&macaddr_ethernet 2>;' \
             "$DTS"
 
           echo
@@ -277,10 +234,10 @@ jobs:
 
           echo
           echo "========================================"
-          echo "PATCH FILES"
+          echo "RTL8261C PATCH"
           echo "========================================"
 
-          ls -lh "$BRIDGE_PATCH" "$RTL_PATCH"
+          ls -lh "$RTL_PATCH"
 
           echo
           echo "========================================"
@@ -424,14 +381,6 @@ jobs:
 
           echo
           echo "========================================"
-          echo "BRIDGE OFFLOAD PATCH"
-          echo "========================================"
-
-          sha256sum \
-            target/linux/mediatek/patches-6.18/967-42-net-dsa-yt922x-add-hardware-bridge-offload.patch
-
-          echo
-          echo "========================================"
           echo "RTL8261C FIX"
           echo "========================================"
 
@@ -458,7 +407,7 @@ jobs:
           echo "========================================"
 
           grep -F \
-            'nvmem-cells = <&macaddr_ethernet 1>;' \
+            'nvmem-cells = <&macaddr_ethernet 2>;' \
             target/linux/mediatek/dts/mt7988a-glinet-gl-be14000.dts
 
           grep -n -A8 \
