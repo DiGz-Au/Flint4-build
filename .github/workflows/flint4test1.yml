@@ -1,11 +1,11 @@
-name: Flint 4 MAC Fix 2
+name: Flint 4 MAC Fix test 2
 
 on:
   workflow_dispatch:
 
 jobs:
   build:
-    name: Build GL-BE14000 OpenWrt with Panel UI + YT9224 + SQM + GMAC Fix
+    name: Build GL-BE14000 mac fix test
     runs-on: ubuntu-22.04
 
     steps:
