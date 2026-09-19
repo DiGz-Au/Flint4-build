@@ -1,4 +1,4 @@
-name: Flint 4 MAC Fix 3
+name: Flint 4 MAC Fix 2
 
 on:
   workflow_dispatch:
