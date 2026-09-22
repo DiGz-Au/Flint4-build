@@ -1,11 +1,11 @@
-name: Flint 4 v1.2
+name: Flint 4 v1.2.1
 
 on:
   workflow_dispatch:
 
 jobs:
   build:
-    name: Build GL-BE14000 OpenWrt v1.2
+    name: Build GL-BE14000 OpenWrt v1.2.1
     runs-on: ubuntu-22.04
 
     steps:
@@ -97,6 +97,43 @@ jobs:
           git rev-parse HEAD
 
       # ============================================================
+      # Restore Factory MAC on GMAC1
+      # ============================================================
+      - name: Apply GMAC1 Factory MAC Fix
+        run: |
+          set -euo pipefail
+          cd openwrt
+
+          DTS="target/linux/mediatek/dts/mt7988a-glinet-gl-be14000.dts"
+
+          GMAC1_FIX="40d1731c36f017522da33e37e09457d3b2978b9d"
+          GMAC1_REPO="https://github.com/akorshun/openwrt.git"
+
+          if sed -n '/^&gmac1 {/,/^};/p' "$DTS" | \
+             grep -Fq 'nvmem-cells = <&macaddr_ethernet 2>;' && \
+             sed -n '/^&gmac1 {/,/^};/p' "$DTS" | \
+             grep -Fq 'nvmem-cell-names = "mac-address";'; then
+            echo "GMAC1 already uses factory MAC offset +2; skipping commit."
+          else
+            if sed -n '/^&gmac1 {/,/^};/p' "$DTS" | \
+               grep -Eq 'nvmem-cells|nvmem-cell-names'; then
+              echo "ERROR: GMAC1 has an unexpected partial or different NVMEM assignment."
+              exit 1
+            fi
+
+            git fetch --no-tags "$GMAC1_REPO" "$GMAC1_FIX"
+            git show -s --format='%H %s' "$GMAC1_FIX"
+
+            git -c user.name="Flint 4 Build Bot" \
+                -c user.email="actions@github.com" \
+                cherry-pick "$GMAC1_FIX"
+          fi
+
+          echo
+          echo "Final GMAC1 block:"
+          sed -n '/^&gmac1 {/,/^};/p' "$DTS"
+
+      # ============================================================
       # Verify Current Flint 4 Support
       # ============================================================
       - name: Verify Flint 4 Baseline
@@ -137,11 +174,13 @@ jobs:
 
           sed -n '/^&gmac1 {/,/^};/p' "$DTS"
 
-          if sed -n '/^&gmac1 {/,/^};/p' "$DTS" | \
-             grep -Fq 'nvmem-cells'; then
-            echo "ERROR: GMAC1 unexpectedly has a factory MAC assignment."
-            exit 1
-          fi
+          sed -n '/^&gmac1 {/,/^};/p' "$DTS" | \
+            grep -F \
+              'nvmem-cells = <&macaddr_ethernet 2>;'
+
+          sed -n '/^&gmac1 {/,/^};/p' "$DTS" | \
+            grep -F \
+              'nvmem-cell-names = "mac-address";'
 
           echo
           echo "========================================"
@@ -282,6 +321,23 @@ jobs:
           CONFIG_PACKAGE_kmod-ifb=y
           CONFIG_PACKAGE_kmod-sched-cake=y
           CONFIG_PACKAGE_ip-full=y
+
+          # LuCI Statistics / collectd monitoring
+          CONFIG_PACKAGE_luci-app-statistics=y
+          CONFIG_PACKAGE_collectd=y
+          CONFIG_PACKAGE_collectd-mod-cpu=y
+          CONFIG_PACKAGE_collectd-mod-cpufreq=y
+          CONFIG_PACKAGE_collectd-mod-interface=y
+          CONFIG_PACKAGE_collectd-mod-iwinfo=y
+          CONFIG_PACKAGE_collectd-mod-load=y
+          CONFIG_PACKAGE_collectd-mod-memory=y
+          CONFIG_PACKAGE_collectd-mod-network=y
+          CONFIG_PACKAGE_collectd-mod-rrdtool=y
+          CONFIG_PACKAGE_collectd-mod-sensors=y
+          CONFIG_PACKAGE_collectd-mod-thermal=y
+          CONFIG_PACKAGE_collectd-mod-uptime=y
+          CONFIG_PACKAGE_lm-sensors=y
+          CONFIG_PACKAGE_rrdtool1=y
           EOF_CONFIG
 
           make defconfig
@@ -323,6 +379,37 @@ jobs:
           grep -E \
             'CONFIG_PACKAGE_(luci-app-sqm|sqm-scripts|kmod-ifb|kmod-sched-cake|ip-full)' \
             .config
+
+          echo
+          echo "========================================"
+          echo "LUCI STATISTICS / COLLECTD / SENSORS"
+          echo "========================================"
+
+          MONITORING_PACKAGES="
+          luci-app-statistics
+          collectd
+          collectd-mod-cpu
+          collectd-mod-cpufreq
+          collectd-mod-interface
+          collectd-mod-iwinfo
+          collectd-mod-load
+          collectd-mod-memory
+          collectd-mod-network
+          collectd-mod-rrdtool
+          collectd-mod-sensors
+          collectd-mod-thermal
+          collectd-mod-uptime
+          lm-sensors
+          rrdtool1
+          "
+
+          for package in $MONITORING_PACKAGES; do
+            if ! grep -q "^CONFIG_PACKAGE_${package}=y$" .config; then
+              echo "ERROR: Required monitoring package is missing: $package"
+              exit 1
+            fi
+            echo "ENABLED: $package"
+          done
 
           echo
           echo "========================================"
@@ -435,7 +522,7 @@ jobs:
           cd openwrt
 
           {
-            echo "Flint 4 v1.2"
+            echo "Flint 4 v1.2.1"
             echo
             echo "OpenWrt source:"
             echo "https://github.com/JiaY-shi/openwrt"
@@ -458,6 +545,6 @@ jobs:
       - name: Upload Firmware Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Flint4-v1.2-OpenWrt
+          name: Flint4-v1.2.1-OpenWrt
           path: firmware-out
           if-no-files-found: error
