@@ -1,0 +1,576 @@
+name: Flint 4 v1.3.1
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build GL-BE14000 OpenWrt v1.3.1
+    runs-on: ubuntu-22.04
+
+    steps:
+
+      # ============================================================
+      # Maximize Build Space
+      # ============================================================
+      - name: Maximize Build Space
+        uses: easimon/maximize-build-space@v10
+        with:
+          root-reserve-mb: 1024
+          swap-size-mb: 1024
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          remove-codeql: 'true'
+          remove-docker-images: 'true'
+
+      # ============================================================
+      # Free Runner Space
+      # ============================================================
+      - name: Free Runner Space
+        run: |
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo rm -rf /usr/local/share/boost
+          sudo rm -rf /usr/local/.ghcup
+          sudo rm -rf /opt/microsoft
+          sudo docker system prune -af || true
+          sudo apt-get clean
+          sudo rm -rf /var/lib/apt/lists/*
+          df -h
+
+      # ============================================================
+      # Build Dependencies
+      # ============================================================
+      - name: Install Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            clang \
+            flex \
+            bison \
+            gawk \
+            gcc-multilib \
+            g++-multilib \
+            gettext \
+            git \
+            libncurses5-dev \
+            libssl-dev \
+            python3-distutils \
+            rsync \
+            unzip \
+            zlib1g-dev \
+            file \
+            wget \
+            device-tree-compiler
+
+          sudo apt-get clean
+          sudo rm -rf /var/lib/apt/lists/*
+          df -h
+
+      # ============================================================
+      # Checkout Current Flint 4 Support Branch
+      # ============================================================
+      - name: Checkout Flint 4 Support
+        run: |
+          set -euo pipefail
+
+          git clone \
+            --depth 1 \
+            -b flint4-support \
+            https://github.com/JiaY-shi/openwrt.git \
+            openwrt
+
+          cd openwrt
+
+          echo "========================================"
+          echo "FLINT 4 BASELINE"
+          echo "========================================"
+
+          git log -1 --oneline
+
+          echo
+          echo "Commit:"
+          git rev-parse HEAD
+
+      # ============================================================
+      # Verify Current Flint 4 Support
+      # ============================================================
+      - name: Verify Flint 4 Baseline
+        run: |
+          set -euo pipefail
+          cd openwrt
+
+          DTS="target/linux/mediatek/dts/mt7988a-glinet-gl-be14000.dts"
+
+          if [ ! -f "$DTS" ]; then
+            echo "ERROR: GL-BE14000 DTS not found."
+            exit 1
+          fi
+
+          echo "========================================"
+          echo "PRODUCTION MEMORY LAYOUT"
+          echo "========================================"
+
+          grep -F \
+            'reg = <0x0 0x40000000 0x0 0x80000000>;' \
+            "$DTS"
+
+          echo
+          echo "========================================"
+          echo "GMAC0 FACTORY MAC +2"
+          echo "========================================"
+
+          sed -n '/^&gmac0 {/,/^};/p' "$DTS"
+
+          sed -n '/^&gmac0 {/,/^};/p' "$DTS" | \
+            grep -F \
+              'nvmem-cells = <&macaddr_ethernet 2>;'
+
+          sed -n '/^&gmac0 {/,/^};/p' "$DTS" | \
+            grep -F \
+              'nvmem-cell-names = "mac-address";'
+
+          echo
+          echo "========================================"
+          echo "GMAC1 INTERNAL 10G SWITCH LINK"
+          echo "========================================"
+
+          GMAC1_BLOCK="$(
+            sed -n '/^&gmac1 {/,/^};/p' "$DTS"
+          )"
+
+          printf '%s\n' "$GMAC1_BLOCK"
+
+          printf '%s\n' "$GMAC1_BLOCK" | \
+            grep -F \
+              'phy-mode = "usxgmii";'
+
+          printf '%s\n' "$GMAC1_BLOCK" | \
+            grep -F \
+              'speed = <10000>;'
+
+          if printf '%s\n' "$GMAC1_BLOCK" | \
+             grep -Eq 'nvmem-cells|nvmem-cell-names'; then
+            echo "ERROR: GMAC1 unexpectedly contains an NVMEM MAC assignment."
+            exit 1
+          fi
+
+          echo "GMAC1 correctly has no factory MAC assignment."
+
+          echo
+          echo "========================================"
+          echo "GMAC2 / WAN FACTORY MAC"
+          echo "========================================"
+
+          GMAC2_BLOCK="$(
+            sed -n '/^&gmac2 {/,/^};/p' "$DTS"
+          )"
+
+          printf '%s\n' "$GMAC2_BLOCK"
+
+          printf '%s\n' "$GMAC2_BLOCK" | \
+            grep -F \
+              'nvmem-cells = <&macaddr_ethernet 0>;'
+
+          printf '%s\n' "$GMAC2_BLOCK" | \
+            grep -F \
+              'nvmem-cell-names = "mac-address";'
+
+          printf '%s\n' "$GMAC2_BLOCK" | \
+            grep -F \
+              'openwrt,netdev-name = "wan";'
+
+          echo
+          echo "========================================"
+          echo "FIXED 10G USXGMII"
+          echo "========================================"
+
+          grep -A4 \
+            '^&usxgmiisys1' \
+            "$DTS" | \
+            grep -F \
+              'mediatek,force-fixed-10g;'
+
+          echo
+          echo "========================================"
+          echo "SFP CAGE SUPPORT"
+          echo "========================================"
+
+          grep -A20 \
+            'sfp_yt9224: sfp' \
+            "$DTS"
+
+          grep -A20 \
+            'sfp_yt9224: sfp' \
+            "$DTS" | \
+            grep -F \
+              'rate-select0-gpios = <&pio 83 GPIO_ACTIVE_HIGH>;'
+
+          grep -A20 \
+            'sfp_yt9224: sfp' \
+            "$DTS" | \
+            grep -F \
+              'rate-select1-gpios = <&pio 80 GPIO_ACTIVE_HIGH>;'
+
+          grep -A20 \
+            'sfp_yt9224: sfp' \
+            "$DTS" | \
+            grep -F \
+              'i2c-bus = <&i2c_sfp>;'
+
+          echo
+          echo "========================================"
+          echo "TOUCHSCREEN ROTATION"
+          echo "========================================"
+
+          grep -A20 -B4 \
+            'touchscreen@58' \
+            "$DTS"
+
+          grep -A20 \
+            'touchscreen@58' \
+            "$DTS" | \
+            grep -F \
+              'touchscreen-swapped-x-y;'
+
+          grep -A20 \
+            'touchscreen@58' \
+            "$DTS" | \
+            grep -F \
+              'touchscreen-inverted-x;'
+
+          grep -A20 \
+            'touchscreen@58' \
+            "$DTS" | \
+            grep -F \
+              'touchscreen-inverted-y;'
+
+          echo
+          echo "========================================"
+          echo "RTL8261C FIRMWARE PROBE FIX"
+          echo "========================================"
+
+          RTL_PATCH="target/linux/generic/pending-6.18/744-net-phy-realtek-fix-RTL8261C-firmware-probe.patch"
+
+          test -f "$RTL_PATCH"
+          ls -lh "$RTL_PATCH"
+
+          echo
+          echo "========================================"
+          echo "WED SER DOUBLE-FREE FIX"
+          echo "========================================"
+
+          WED_PATCH="target/linux/mediatek/patches-6.18/978-net-ethernet-mtk_wed-fix-SER-double-free.patch"
+
+          test -f "$WED_PATCH"
+          ls -lh "$WED_PATCH"
+
+          echo
+          echo "========================================"
+          echo "YT9224 BRIDGE / VLAN STACK"
+          echo "========================================"
+
+          test -f target/linux/mediatek/patches-6.18/967-42-net-dsa-yt922x-add-experimental-bridge-offload.patch
+          test -f target/linux/mediatek/patches-6.18/967-45-net-dsa-yt922x-add-unicast-fdb-management.patch
+          test -f target/linux/mediatek/patches-6.18/967-49-net-dsa-yt922x-offload-multicast-database.patch
+          test -f target/linux/mediatek/patches-6.18/967-50-net-dsa-yt922x-add-8021q-vlan-offload.patch
+          test -f target/linux/mediatek/patches-6.18/967-52-net-dsa-yt922x-sync-mdb-with-bridge-snooping.patch
+
+          echo "Current YT9224 support stack verified."
+
+      # ============================================================
+      # Add BLogic Panel UI Feed
+      # ============================================================
+      - name: Add BLogic Panel Feed
+        run: |
+          set -euo pipefail
+          cd openwrt
+
+          echo \
+            "src-git blogic https://github.com/blogic/feed-blogic.git" \
+            >> feeds.conf.default
+
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      # ============================================================
+      # Generate Target Configuration
+      # ============================================================
+      - name: Generate Target Configuration
+        run: |
+          set -euo pipefail
+          cd openwrt
+
+          cat << 'EOF_CONFIG' > .config
+          CONFIG_TARGET_mediatek=y
+          CONFIG_TARGET_mediatek_filogic=y
+          CONFIG_TARGET_MULTI_PROFILE=y
+          CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_glinet_gl-be14000=y
+
+          CONFIG_VERSION_REPO="https://downloads.openwrt.org/snapshots"
+
+          # BLogic is build-time only
+          # CONFIG_FEED_blogic is not set
+
+          # LuCI
+          CONFIG_PACKAGE_luci=y
+          CONFIG_PACKAGE_luci-ssl=y
+
+          # GL.iNet front-panel UI
+          CONFIG_PACKAGE_glinet-panel-ui=y
+          CONFIG_PACKAGE_ucode-mod-lvgl=y
+
+          # SQM / CAKE
+          CONFIG_PACKAGE_luci-app-sqm=y
+          CONFIG_PACKAGE_sqm-scripts=y
+          CONFIG_PACKAGE_kmod-ifb=y
+          CONFIG_PACKAGE_kmod-sched-cake=y
+          CONFIG_PACKAGE_ip-full=y
+
+          # LuCI Statistics / collectd monitoring
+          CONFIG_PACKAGE_luci-app-statistics=y
+          CONFIG_PACKAGE_collectd=y
+          CONFIG_PACKAGE_collectd-mod-cpu=y
+          CONFIG_PACKAGE_collectd-mod-cpufreq=y
+          CONFIG_PACKAGE_collectd-mod-interface=y
+          CONFIG_PACKAGE_collectd-mod-iwinfo=y
+          CONFIG_PACKAGE_collectd-mod-load=y
+          CONFIG_PACKAGE_collectd-mod-memory=y
+          CONFIG_PACKAGE_collectd-mod-network=y
+          CONFIG_PACKAGE_collectd-mod-rrdtool=y
+          CONFIG_PACKAGE_collectd-mod-sensors=y
+          CONFIG_PACKAGE_collectd-mod-thermal=y
+          CONFIG_PACKAGE_collectd-mod-uptime=y
+          CONFIG_PACKAGE_lm-sensors=y
+          CONFIG_PACKAGE_rrdtool1=y
+          EOF_CONFIG
+
+          make defconfig
+
+      # ============================================================
+      # Verify Final Configuration
+      # ============================================================
+      - name: Verify Build Configuration
+        run: |
+          set -euo pipefail
+          cd openwrt
+
+          echo "========================================"
+          echo "TARGET"
+          echo "========================================"
+
+          grep -E \
+            'CONFIG_TARGET_mediatek|CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_glinet_gl-be14000' \
+            .config
+
+          echo
+          echo "========================================"
+          echo "PANEL UI"
+          echo "========================================"
+
+          grep -E \
+            'CONFIG_PACKAGE_(glinet-panel-ui|ucode-mod-lvgl|lvgl)' \
+            .config || true
+
+          grep -q \
+            '^CONFIG_PACKAGE_glinet-panel-ui=y' \
+            .config
+
+          echo
+          echo "========================================"
+          echo "SFP SUPPORT"
+          echo "========================================"
+
+          grep -E \
+            'CONFIG_PACKAGE_kmod-(sfp|i2c-gpio)' \
+            .config
+
+          grep -q \
+            '^CONFIG_PACKAGE_kmod-sfp=y' \
+            .config
+
+          grep -q \
+            '^CONFIG_PACKAGE_kmod-i2c-gpio=y' \
+            .config
+
+          echo
+          echo "========================================"
+          echo "SQM / CAKE"
+          echo "========================================"
+
+          grep -E \
+            'CONFIG_PACKAGE_(luci-app-sqm|sqm-scripts|kmod-ifb|kmod-sched-cake|ip-full)' \
+            .config
+
+          echo
+          echo "========================================"
+          echo "LUCI STATISTICS / COLLECTD / SENSORS"
+          echo "========================================"
+
+          MONITORING_PACKAGES="
+          luci-app-statistics
+          collectd
+          collectd-mod-cpu
+          collectd-mod-cpufreq
+          collectd-mod-interface
+          collectd-mod-iwinfo
+          collectd-mod-load
+          collectd-mod-memory
+          collectd-mod-network
+          collectd-mod-rrdtool
+          collectd-mod-sensors
+          collectd-mod-thermal
+          collectd-mod-uptime
+          lm-sensors
+          rrdtool1
+          "
+
+          for package in $MONITORING_PACKAGES; do
+            if ! grep -q "^CONFIG_PACKAGE_${package}=y$" .config; then
+              echo "ERROR: Required monitoring package is missing: $package"
+              exit 1
+            fi
+            echo "ENABLED: $package"
+          done
+
+          echo
+          echo "========================================"
+          echo "RUNTIME APK REPOSITORY"
+          echo "========================================"
+
+          grep '^CONFIG_VERSION_REPO=' .config || true
+
+          if grep -q '^CONFIG_FEED_blogic=y' .config; then
+            echo "ERROR: BLogic feed enabled as runtime APK repository."
+            exit 1
+          fi
+
+          echo "BLogic runtime repository is disabled."
+
+      # ============================================================
+      # Download Source Packages
+      # ============================================================
+      - name: Download Source Packages
+        run: |
+          set -euo pipefail
+          cd openwrt
+
+          make download -j$(nproc)
+
+          find dl \
+            -type f \
+            -size -1024c \
+            -delete
+
+      # ============================================================
+      # Compile Firmware
+      # ============================================================
+      - name: Compile Firmware
+        run: |
+          cd openwrt
+
+          echo "Building on $(nproc) cores..."
+
+          make -j$(nproc) || make -j1 V=s
+
+      # ============================================================
+      # Verify Runtime APK Repositories
+      # ============================================================
+      - name: Verify Runtime APK Repositories
+        run: |
+          set -euo pipefail
+          cd openwrt
+
+          mapfile -t REPO_FILES < <(
+            find build_dir staging_dir \
+              -type f \
+              -path '*/etc/apk/repositories.d/distfeeds.list' \
+              -print
+          )
+
+          if [ "${#REPO_FILES[@]}" -eq 0 ]; then
+            echo "ERROR: Generated APK distfeeds.list was not found."
+            exit 1
+          fi
+
+          for repo_file in "${REPO_FILES[@]}"; do
+            echo
+            echo "===== $repo_file ====="
+            cat "$repo_file"
+
+            grep -Fq \
+              'https://downloads.openwrt.org/snapshots/' \
+              "$repo_file"
+
+            if grep -Fiq '/blogic/' "$repo_file"; then
+              echo "ERROR: BLogic was emitted as a runtime APK repository."
+              exit 1
+            fi
+          done
+
+      # ============================================================
+      # Prepare Firmware Artifacts
+      # ============================================================
+      - name: Prepare Firmware Artifacts
+        run: |
+          set -euo pipefail
+          cd openwrt
+
+          mkdir -p ../firmware-out
+
+          find bin/targets/mediatek/filogic/ \
+            -type f \
+            \( \
+              -name "*.bin" \
+              -o -name "*.img" \
+              -o -name "*.itb" \
+              -o -name "*.manifest" \
+            \) \
+            -exec cp {} ../firmware-out/ \;
+
+          echo
+          echo "========================================"
+          echo "BUILD ARTIFACTS"
+          echo "========================================"
+
+          ls -lah ../firmware-out
+
+      # ============================================================
+      # Save Build Information
+      # ============================================================
+      - name: Save Build Information
+        run: |
+          set -euo pipefail
+          cd openwrt
+
+          {
+            echo "Flint 4 v1.3.1"
+            echo
+            echo "OpenWrt source:"
+            echo "https://github.com/JiaY-shi/openwrt"
+            echo
+            echo "Branch:"
+            echo "flint4-support"
+            echo
+            echo "Commit:"
+            git rev-parse HEAD
+            echo
+            echo "Commit description:"
+            git log -1 --oneline
+          } > ../firmware-out/build-info.txt
+
+          cat ../firmware-out/build-info.txt
+
+      # ============================================================
+      # Upload Firmware
+      # ============================================================
+      - name: Upload Firmware Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Flint4-v1.3.1-OpenWrt
+          path: firmware-out
+          if-no-files-found: error
