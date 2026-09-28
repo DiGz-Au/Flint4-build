@@ -1,11 +1,11 @@
-name: Flint 4 v1.3.1
+name: Flint 4 v1.4.0
 
 on:
   workflow_dispatch:
 
 jobs:
   build:
-    name: Build GL-BE14000 OpenWrt v1.3.1
+    name: Build GL-BE14000 OpenWrt v1.4.0
     runs-on: ubuntu-22.04
 
     steps:
@@ -282,6 +282,23 @@ jobs:
 
           echo "Current YT9224 support stack verified."
 
+          echo
+          echo "========================================"
+          echo "YT9224 HARDWARE MIB STATISTICS"
+          echo "========================================"
+
+          MIB_PATCH="target/linux/mediatek/patches-6.18/967-53-net-dsa-yt922x-expose-mib-statistics.patch"
+
+          test -f "$MIB_PATCH"
+          ls -lh "$MIB_PATCH"
+
+          grep -F 'YT922X_MIB_NUM' "$MIB_PATCH"
+          grep -F 'yt922x_read_mib' "$MIB_PATCH"
+          grep -F 'get_ethtool_stats' "$MIB_PATCH"
+          grep -F 'get_stats64' "$MIB_PATCH"
+
+          echo "YT9224 MIB statistics support verified."
+
       # ============================================================
       # Add BLogic Panel UI Feed
       # ============================================================
@@ -548,7 +565,7 @@ jobs:
           cd openwrt
 
           {
-            echo "Flint 4 v1.3.1"
+            echo "Flint 4 v1.4.0"
             echo
             echo "OpenWrt source:"
             echo "https://github.com/JiaY-shi/openwrt"
@@ -571,6 +588,6 @@ jobs:
       - name: Upload Firmware Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Flint4-v1.3.1-OpenWrt
+          name: Flint4-v1.4.0-OpenWrt
           path: firmware-out
           if-no-files-found: error
