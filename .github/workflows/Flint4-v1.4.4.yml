@@ -1,11 +1,11 @@
-name: Flint 4 v1.4.3
+name: Flint 4 v1.4.4
 
 on:
   workflow_dispatch:
 
 jobs:
   build:
-    name: Build GL-BE14000 OpenWrt v1.4.3
+    name: Build GL-BE14000 OpenWrt v1.4.4
     runs-on: ubuntu-22.04
 
     steps:
@@ -362,42 +362,54 @@ jobs:
           cd openwrt
 
           echo "========================================"
-          echo "PATCH PANEL UI FOR 4-DIGIT PIN"
+          echo "ADD PANEL UI 4-DIGIT PIN PACKAGE PATCH"
           echo "========================================"
 
-          PANEL_RUNTIME="$(
-            find -L feeds package/feeds \
-              -type f \
-              -path '*/glinet-panel-ui/*/lib/runtime.uc' \
-              -print -quit 2>/dev/null
-          )"
+          PANEL_PKG="feeds/blogic/glinet-panel-ui"
 
-          PANEL_THEME="$(
-            find -L feeds package/feeds \
-              -type f \
-              -path '*/glinet-panel-ui/*/lib/theme.uc' \
-              -print -quit 2>/dev/null
-          )"
-
-          if [ -z "$PANEL_RUNTIME" ] || [ -z "$PANEL_THEME" ]; then
-            echo "ERROR: glinet-panel-ui runtime/theme source files were not found."
+          if [ ! -f "$PANEL_PKG/Makefile" ]; then
+            echo "ERROR: BLogic glinet-panel-ui package was not found at $PANEL_PKG"
             exit 1
           fi
 
-          echo "runtime: $PANEL_RUNTIME"
-          echo "theme:   $PANEL_THEME"
+          mkdir -p "$PANEL_PKG/patches"
 
-          sed -i \
-            -e 's/\^\[0-9\]{6}\$/^[0-9]{4}$/' \
-            -e 's/pin must be six digits/pin must be four digits/' \
-            "$PANEL_RUNTIME"
+          cat << 'EOF_PANEL_PATCH' > "$PANEL_PKG/patches/001-four-digit-pin.patch"
+          --- a/ucode/lib/runtime.uc
+          +++ b/ucode/lib/runtime.uc
+          @@ -140,10 +140,10 @@ function settings_read() {
+           	let pin = cursor.get('glinet_panel', '@panel[0]', 'pin');
 
-          sed -i -E \
-            's/(PIN_LEN[[:space:]]*=[[:space:]]*)6/\14/' \
-            "$PANEL_THEME"
+          -	if (type(pin) == 'string' && match(pin, /^[0-9]{6}$/))
+          +	if (type(pin) == 'string' && match(pin, /^[0-9]{4}$/))
+           		settings.pin = pin;
+           	else if (pin)
+          -		warn('panel: pin must be six digits, ignoring it\n');
+          +		warn('panel: pin must be four digits, ignoring it\n');
 
-          grep -F 'match(pin, /^[0-9]{4}$/)' "$PANEL_RUNTIME"
-          grep -E 'PIN_LEN[[:space:]]*=[[:space:]]*4' "$PANEL_THEME"
+           	let bright = cursor.get('glinet_panel', '@panel[0]', 'brightness');
+
+          --- a/ucode/lib/theme.uc
+          +++ b/ucode/lib/theme.uc
+          @@ -141,7 +141,7 @@ export const BAR_FILL_MIN = 46;
+           * 240 px on itself.
+           */
+          -export const PIN_LEN	= 6;
+          +export const PIN_LEN	= 4;
+           export const PIN_PAD	= 10;
+           export const PIN_TOP	= 12;
+           export const PIN_BOTTOM	= 8;
+          EOF_PANEL_PATCH
+
+          echo "Panel package patch created:"
+          cat "$PANEL_PKG/patches/001-four-digit-pin.patch"
+
+          grep -F 'match(pin, /^[0-9]{4}$/)' \
+            "$PANEL_PKG/patches/001-four-digit-pin.patch"
+
+          grep -F 'export const PIN_LEN' \
+            "$PANEL_PKG/patches/001-four-digit-pin.patch" | \
+            grep -F '+export const PIN_LEN'
 
           echo
           echo "========================================"
@@ -754,7 +766,7 @@ jobs:
           cd openwrt
 
           {
-            echo "Flint 4 v1.4.3"
+            echo "Flint 4 v1.4.4"
             echo
             echo "OpenWrt source:"
             echo "https://github.com/JiaY-shi/openwrt"
@@ -777,6 +789,6 @@ jobs:
       - name: Upload Firmware Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Flint4-v1.4.3-OpenWrt
+          name: Flint4-v1.4.4-OpenWrt
           path: firmware-out
           if-no-files-found: error
