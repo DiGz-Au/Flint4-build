@@ -1,11 +1,11 @@
-name: Flint 4 v1.4.2
+name: Flint 4 v1.4.3
 
 on:
   workflow_dispatch:
 
 jobs:
   build:
-    name: Build GL-BE14000 OpenWrt v1.4.2
+    name: Build GL-BE14000 OpenWrt v1.4.3
     runs-on: ubuntu-22.04
 
     steps:
@@ -356,7 +356,7 @@ jobs:
       # ============================================================
       # Flint 4 Persistent Local Customisations
       # ============================================================
-      - name: Add Persistent Fan and Panel Customisations
+      - name: Add Persistent Fan, USB and Panel Customisations
         run: |
           set -euo pipefail
           cd openwrt
@@ -387,13 +387,11 @@ jobs:
           echo "runtime: $PANEL_RUNTIME"
           echo "theme:   $PANEL_THEME"
 
-          # Accept exactly four numeric PIN digits.
           sed -i \
             -e 's/\^\[0-9\]{6}\$/^[0-9]{4}$/' \
             -e 's/pin must be six digits/pin must be four digits/' \
             "$PANEL_RUNTIME"
 
-          # Render and validate four PIN positions instead of six.
           sed -i -E \
             's/(PIN_LEN[[:space:]]*=[[:space:]]*)6/\14/' \
             "$PANEL_THEME"
@@ -403,48 +401,91 @@ jobs:
 
           echo
           echo "========================================"
-          echo "INSTALL FIXED 25% FAN SERVICE"
+          echo "INSTALL /ETC/CUSTOM FAN + USB SCRIPTS"
           echo "========================================"
 
-          mkdir -p files/etc/init.d files/etc/rc.d
+          mkdir -p files/etc/custom files/etc/init.d files/etc/rc.d files/usr/bin
 
-          cat << 'EOF_FAN' > files/etc/init.d/flint4-fan-fixed
+          cat << 'EOF_FAN' > files/etc/custom/fan-fixed
+          #!/bin/sh
+
+          for h in /sys/class/hwmon/hwmon*; do
+              [ -r "$h/name" ] || continue
+              [ "$(cat "$h/name" 2>/dev/null)" = "pwmfan" ] || continue
+
+              [ -w "$h/pwm1_enable" ] && echo 1 > "$h/pwm1_enable"
+              echo 64 > "$h/pwm1"
+
+              logger -t fan-fixed "Fan set to PWM 64"
+              exit 0
+          done
+
+          logger -t fan-fixed "pwmfan device not found"
+          exit 1
+          EOF_FAN
+
+          chmod 0755 files/etc/custom/fan-fixed
+
+          cat << 'EOF_FAN_INIT' > files/etc/init.d/flint4-fan-fixed
           #!/bin/sh /etc/rc.common
 
           START=99
-          STOP=10
-
-          find_pwmfan() {
-              for h in /sys/class/hwmon/hwmon*; do
-                  [ -r "$h/name" ] || continue
-                  [ "$(cat "$h/name" 2>/dev/null)" = "pwmfan" ] || continue
-
-                  PWM="$h/pwm1"
-                  ENABLE="$h/pwm1_enable"
-
-                  [ -w "$PWM" ] || continue
-                  return 0
-              done
-
-              return 1
-          }
 
           start() {
-              if ! find_pwmfan; then
-                  logger -t flint4-fan-fixed "pwmfan hwmon device not found"
-                  return 1
-              fi
-
-              [ -w "$ENABLE" ] && echo 1 > "$ENABLE"
-              echo 64 > "$PWM"
-
-              logger -t flint4-fan-fixed "Fixed fan PWM set to 64 (25%)"
+              /etc/custom/fan-fixed
           }
-          EOF_FAN
+          EOF_FAN_INIT
 
           chmod 0755 files/etc/init.d/flint4-fan-fixed
           ln -sf ../init.d/flint4-fan-fixed \
             files/etc/rc.d/S99flint4-fan-fixed
+
+          cat << 'EOF_USB' > files/etc/custom/usb-power
+          #!/bin/sh
+
+          USB_GPIO="/sys/class/gpio/usb_power/value"
+          TYPEC_GPIO="/sys/class/gpio/typec_power/value"
+          XHCI="/sys/bus/platform/drivers/xhci-mtk"
+
+          CONTROLLERS="11190000.usb 11200000.usb"
+
+          usb_off() {
+              for c in $CONTROLLERS; do
+                  [ -e "$XHCI/$c" ] && echo "$c" > "$XHCI/unbind"
+              done
+
+              echo 0 > "$USB_GPIO"
+              echo 0 > "$TYPEC_GPIO"
+
+              logger -t usb-control "USB power OFF"
+              echo "USB OFF"
+          }
+
+          usb_on() {
+              echo 1 > "$USB_GPIO"
+              echo 1 > "$TYPEC_GPIO"
+
+              sleep 1
+
+              for c in $CONTROLLERS; do
+                  [ ! -e "$XHCI/$c" ] && echo "$c" > "$XHCI/bind"
+              done
+
+              logger -t usb-control "USB power ON"
+              echo "USB ON"
+          }
+
+          state="$(cat "$USB_GPIO" 2>/dev/null)"
+
+          if [ "$state" = "1" ]; then
+              usb_off
+          else
+              usb_on
+          fi
+          EOF_USB
+
+          chmod 0755 files/etc/custom/usb-power
+          ln -sf /etc/custom/usb-power files/usr/bin/usb-power
 
           echo
           echo "========================================"
@@ -454,11 +495,9 @@ jobs:
           mkdir -p files/etc
 
           cat << 'EOF_KEEP' >> files/etc/sysupgrade.conf
-          /etc/config/glinet_panel
+          /etc/custom/
           /etc/init.d/flint4-fan-fixed
-          /etc/rc.d/S99flint4-fan-fixed
-          /etc/init.d/usb-control
-          /etc/rc.local
+          /etc/config/glinet_panel
           EOF_KEEP
 
           echo "Persistent files:"
@@ -715,7 +754,7 @@ jobs:
           cd openwrt
 
           {
-            echo "Flint 4 v1.4.2"
+            echo "Flint 4 v1.4.3"
             echo
             echo "OpenWrt source:"
             echo "https://github.com/JiaY-shi/openwrt"
@@ -738,6 +777,6 @@ jobs:
       - name: Upload Firmware Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Flint4-v1.4.2-OpenWrt
+          name: Flint4-v1.4.3-OpenWrt
           path: firmware-out
           if-no-files-found: error
