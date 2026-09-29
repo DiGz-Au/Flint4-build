@@ -1,11 +1,11 @@
-name: Flint 4 v1.3.2
+name: Flint 4 v1.4.4
 
 on:
   workflow_dispatch:
 
 jobs:
   build:
-    name: Build GL-BE14000 OpenWrt v1.3.2
+    name: Build GL-BE14000 OpenWrt v1.4.4
     runs-on: ubuntu-22.04
 
     steps:
@@ -254,34 +254,34 @@ jobs:
           mkdir -p "$PATCH_DIR"
 
           cat > "$PATCH_DIR/001-four-digit-pin.patch" <<'EOF_PATCH'
---- a/ucode/lib/runtime.uc
-+++ b/ucode/lib/runtime.uc
-@@ -134,10 +134,10 @@ function settings_read() {
-
- 	let pin = cursor.get('glinet_panel', '@panel[0]', 'pin');
-
--	if (type(pin) == 'string' && match(pin, /^[0-9]{6}$/))
-+	if (type(pin) == 'string' && match(pin, /^[0-9]{4}$/))
- 		settings.pin = pin;
- 	else if (pin)
--		warn('panel: pin must be six digits, ignoring it\n');
-+		warn('panel: pin must be four digits, ignoring it\n');
-
- 	let bright = cursor.get('glinet_panel', '@panel[0]', 'brightness');
-
---- a/ucode/lib/theme.uc
-+++ b/ucode/lib/theme.uc
-@@ -127,7 +127,7 @@ export const BAR_FILL_MIN = 46;
-  * happen until it is satisfied, so it is the one page that spends the whole
-  * 240 px on itself.
-  */
--export const PIN_LEN	= 6;
-+export const PIN_LEN	= 4;
- export const PIN_PAD	= 10;
- export const PIN_TOP	= 12;
- export const PIN_BOTTOM	= 8;
-EOF_PATCH
-
+          --- a/ucode/lib/runtime.uc
+          +++ b/ucode/lib/runtime.uc
+          @@ -134,10 +134,10 @@ function settings_read() {
+          
+           	let pin = cursor.get('glinet_panel', '@panel[0]', 'pin');
+          
+          -	if (type(pin) == 'string' && match(pin, /^[0-9]{6}$/))
+          +	if (type(pin) == 'string' && match(pin, /^[0-9]{4}$/))
+           		settings.pin = pin;
+           	else if (pin)
+          -		warn('panel: pin must be six digits, ignoring it\n');
+          +		warn('panel: pin must be four digits, ignoring it\n');
+          
+           	let bright = cursor.get('glinet_panel', '@panel[0]', 'brightness');
+          
+          --- a/ucode/lib/theme.uc
+          +++ b/ucode/lib/theme.uc
+          @@ -127,7 +127,7 @@ export const BAR_FILL_MIN = 46;
+            * happen until it is satisfied, so it is the one page that spends the whole
+            * 240 px on itself.
+            */
+          -export const PIN_LEN	= 6;
+          +export const PIN_LEN	= 4;
+           export const PIN_PAD	= 10;
+           export const PIN_TOP	= 12;
+           export const PIN_BOTTOM	= 8;
+          EOF_PATCH
+          
           echo "Refreshed 4-digit PIN patch:"
           cat "$PATCH_DIR/001-four-digit-pin.patch"
 
@@ -490,7 +490,7 @@ EOF_PATCH
           set -euo pipefail
           cd openwrt
           {
-            echo "Flint 4 v1.3.2"
+            echo "Flint 4 v1.4.4"
             echo
             echo "OpenWrt source:"
             echo "https://github.com/JiaY-shi/openwrt"
@@ -511,6 +511,6 @@ EOF_PATCH
       - name: Upload Firmware Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Flint4-v1.3.2-OpenWrt
+          name: Flint4-v1.4.4-OpenWrt
           path: firmware-out
           if-no-files-found: error
