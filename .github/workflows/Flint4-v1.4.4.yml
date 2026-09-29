@@ -5,7 +5,7 @@ on:
 
 jobs:
   build:
-    name: Build GL-BE14000 OpenWrt v1.4.4
+    name: Build GL-BE14000 OpenWrt v1.3.2
     runs-on: ubuntu-22.04
 
     steps:
@@ -40,7 +40,6 @@ jobs:
           sudo apt-get clean
           sudo rm -rf /var/lib/apt/lists/*
           df -h
-
       # ============================================================
       # Build Dependencies
       # ============================================================
@@ -66,73 +65,28 @@ jobs:
             file \
             wget \
             device-tree-compiler
-
           sudo apt-get clean
           sudo rm -rf /var/lib/apt/lists/*
           df -h
-
       # ============================================================
       # Checkout Current Flint 4 Support Branch
       # ============================================================
       - name: Checkout Flint 4 Support
         run: |
           set -euo pipefail
-
           git clone \
             --depth 1 \
             -b flint4-support \
             https://github.com/JiaY-shi/openwrt.git \
             openwrt
-
           cd openwrt
-
           echo "========================================"
           echo "FLINT 4 BASELINE"
           echo "========================================"
-
           git log -1 --oneline
-
           echo
           echo "Commit:"
           git rev-parse HEAD
-
-      # ============================================================
-      # Apply GMAC1 Factory MAC Fix
-      # ============================================================
-      - name: Apply GMAC1 Factory MAC Fix
-        run: |
-          set -euo pipefail
-          cd openwrt
-
-          DTS="target/linux/mediatek/dts/mt7988a-glinet-gl-be14000.dts"
-
-          GMAC1_FIX="40d1731c36f017522da33e37e09457d3b2978b9d"
-          GMAC1_REPO="https://github.com/akorshun/openwrt.git"
-
-          if sed -n '/^&gmac1 {/,/^};/p' "$DTS" | \
-             grep -Fq 'nvmem-cells = <&macaddr_ethernet 2>;' && \
-             sed -n '/^&gmac1 {/,/^};/p' "$DTS" | \
-             grep -Fq 'nvmem-cell-names = "mac-address";'; then
-            echo "GMAC1 already uses factory MAC offset +2; skipping commit."
-          else
-            if sed -n '/^&gmac1 {/,/^};/p' "$DTS" | \
-               grep -Eq 'nvmem-cells|nvmem-cell-names'; then
-              echo "ERROR: GMAC1 has an unexpected partial or different NVMEM assignment."
-              exit 1
-            fi
-
-            git fetch --no-tags "$GMAC1_REPO" "$GMAC1_FIX"
-            git show -s --format='%H %s' "$GMAC1_FIX"
-
-            git -c user.name="Flint 4 Build Bot" \
-                -c user.email="actions@github.com" \
-                cherry-pick "$GMAC1_FIX"
-          fi
-
-          echo
-          echo "Final GMAC1 block:"
-          sed -n '/^&gmac1 {/,/^};/p' "$DTS"
-
       # ============================================================
       # Verify Current Flint 4 Support
       # ============================================================
@@ -140,204 +94,142 @@ jobs:
         run: |
           set -euo pipefail
           cd openwrt
-
           DTS="target/linux/mediatek/dts/mt7988a-glinet-gl-be14000.dts"
-
           if [ ! -f "$DTS" ]; then
             echo "ERROR: GL-BE14000 DTS not found."
             exit 1
           fi
-
           echo "========================================"
           echo "PRODUCTION MEMORY LAYOUT"
           echo "========================================"
-
           grep -F \
             'reg = <0x0 0x40000000 0x0 0x80000000>;' \
             "$DTS"
-
           echo
           echo "========================================"
           echo "GMAC0 FACTORY MAC +2"
           echo "========================================"
-
           sed -n '/^&gmac0 {/,/^};/p' "$DTS"
-
           sed -n '/^&gmac0 {/,/^};/p' "$DTS" | \
             grep -F \
               'nvmem-cells = <&macaddr_ethernet 2>;'
-
           sed -n '/^&gmac0 {/,/^};/p' "$DTS" | \
             grep -F \
               'nvmem-cell-names = "mac-address";'
-
           echo
           echo "========================================"
-          echo "GMAC1 INTERNAL 10G SWITCH LINK + LAN MAC"
+          echo "GMAC1 INTERNAL 10G SWITCH LINK"
           echo "========================================"
-
           GMAC1_BLOCK="$(
             sed -n '/^&gmac1 {/,/^};/p' "$DTS"
           )"
-
           printf '%s\n' "$GMAC1_BLOCK"
-
           printf '%s\n' "$GMAC1_BLOCK" | \
             grep -F \
               'phy-mode = "usxgmii";'
-
           printf '%s\n' "$GMAC1_BLOCK" | \
             grep -F \
               'speed = <10000>;'
-
-          printf '%s\n' "$GMAC1_BLOCK" | \
-            grep -F \
-              'nvmem-cells = <&macaddr_ethernet 2>;'
-
-          printf '%s\n' "$GMAC1_BLOCK" | \
-            grep -F \
-              'nvmem-cell-names = "mac-address";'
-
-          echo "GMAC1 correctly uses factory LAN MAC +2."
-
+          if printf '%s\n' "$GMAC1_BLOCK" | \
+             grep -Eq 'nvmem-cells|nvmem-cell-names'; then
+            echo "ERROR: GMAC1 unexpectedly contains an NVMEM MAC assignment."
+            exit 1
+          fi
+          echo "GMAC1 correctly has no factory MAC assignment."
           echo
           echo "========================================"
           echo "GMAC2 / WAN FACTORY MAC"
           echo "========================================"
-
           GMAC2_BLOCK="$(
             sed -n '/^&gmac2 {/,/^};/p' "$DTS"
           )"
-
           printf '%s\n' "$GMAC2_BLOCK"
-
           printf '%s\n' "$GMAC2_BLOCK" | \
             grep -F \
               'nvmem-cells = <&macaddr_ethernet 0>;'
-
           printf '%s\n' "$GMAC2_BLOCK" | \
             grep -F \
               'nvmem-cell-names = "mac-address";'
-
           printf '%s\n' "$GMAC2_BLOCK" | \
             grep -F \
               'openwrt,netdev-name = "wan";'
-
           echo
           echo "========================================"
           echo "FIXED 10G USXGMII"
           echo "========================================"
-
           grep -A4 \
             '^&usxgmiisys1' \
             "$DTS" | \
             grep -F \
               'mediatek,force-fixed-10g;'
-
           echo
           echo "========================================"
           echo "SFP CAGE SUPPORT"
           echo "========================================"
-
           grep -A20 \
             'sfp_yt9224: sfp' \
             "$DTS"
-
           grep -A20 \
             'sfp_yt9224: sfp' \
             "$DTS" | \
             grep -F \
               'rate-select0-gpios = <&pio 83 GPIO_ACTIVE_HIGH>;'
-
           grep -A20 \
             'sfp_yt9224: sfp' \
             "$DTS" | \
             grep -F \
               'rate-select1-gpios = <&pio 80 GPIO_ACTIVE_HIGH>;'
-
           grep -A20 \
             'sfp_yt9224: sfp' \
             "$DTS" | \
             grep -F \
               'i2c-bus = <&i2c_sfp>;'
-
           echo
           echo "========================================"
           echo "TOUCHSCREEN ROTATION"
           echo "========================================"
-
           grep -A20 -B4 \
             'touchscreen@58' \
             "$DTS"
-
           grep -A20 \
             'touchscreen@58' \
             "$DTS" | \
             grep -F \
               'touchscreen-swapped-x-y;'
-
           grep -A20 \
             'touchscreen@58' \
             "$DTS" | \
             grep -F \
               'touchscreen-inverted-x;'
-
           grep -A20 \
             'touchscreen@58' \
             "$DTS" | \
             grep -F \
               'touchscreen-inverted-y;'
-
           echo
           echo "========================================"
           echo "RTL8261C FIRMWARE PROBE FIX"
           echo "========================================"
-
           RTL_PATCH="target/linux/generic/pending-6.18/744-net-phy-realtek-fix-RTL8261C-firmware-probe.patch"
-
           test -f "$RTL_PATCH"
           ls -lh "$RTL_PATCH"
-
           echo
           echo "========================================"
           echo "WED SER DOUBLE-FREE FIX"
           echo "========================================"
-
           WED_PATCH="target/linux/mediatek/patches-6.18/978-net-ethernet-mtk_wed-fix-SER-double-free.patch"
-
           test -f "$WED_PATCH"
           ls -lh "$WED_PATCH"
-
           echo
           echo "========================================"
           echo "YT9224 BRIDGE / VLAN STACK"
           echo "========================================"
-
           test -f target/linux/mediatek/patches-6.18/967-42-net-dsa-yt922x-add-experimental-bridge-offload.patch
           test -f target/linux/mediatek/patches-6.18/967-45-net-dsa-yt922x-add-unicast-fdb-management.patch
           test -f target/linux/mediatek/patches-6.18/967-49-net-dsa-yt922x-offload-multicast-database.patch
           test -f target/linux/mediatek/patches-6.18/967-50-net-dsa-yt922x-add-8021q-vlan-offload.patch
           test -f target/linux/mediatek/patches-6.18/967-52-net-dsa-yt922x-sync-mdb-with-bridge-snooping.patch
-
           echo "Current YT9224 support stack verified."
-
-          echo
-          echo "========================================"
-          echo "YT9224 HARDWARE MIB STATISTICS"
-          echo "========================================"
-
-          MIB_PATCH="target/linux/mediatek/patches-6.18/967-53-net-dsa-yt922x-expose-mib-statistics.patch"
-
-          test -f "$MIB_PATCH"
-          ls -lh "$MIB_PATCH"
-
-          grep -F 'YT922X_MIB_NUM' "$MIB_PATCH"
-          grep -F 'yt922x_read_mib' "$MIB_PATCH"
-          grep -F 'get_ethtool_stats' "$MIB_PATCH"
-          grep -F 'get_stats64' "$MIB_PATCH"
-
-          echo "YT9224 MIB statistics support verified."
-
       # ============================================================
       # Add BLogic Panel UI Feed
       # ============================================================
@@ -345,175 +237,53 @@ jobs:
         run: |
           set -euo pipefail
           cd openwrt
-
           echo \
             "src-git blogic https://github.com/blogic/feed-blogic.git" \
             >> feeds.conf.default
-
           ./scripts/feeds update -a
           ./scripts/feeds install -a
-
       # ============================================================
-      # Flint 4 Persistent Local Customisations
+      # Refresh 4-Digit Panel PIN Patch
       # ============================================================
-      - name: Add Persistent Fan, USB and Panel Customisations
+      - name: Refresh 4-Digit Panel PIN Patch
         run: |
           set -euo pipefail
           cd openwrt
 
-          echo "========================================"
-          echo "ADD PANEL UI 4-DIGIT PIN PACKAGE PATCH"
-          echo "========================================"
+          PATCH_DIR="feeds/blogic/glinet-panel-ui/patches"
+          mkdir -p "$PATCH_DIR"
 
-          PANEL_PKG="feeds/blogic/glinet-panel-ui"
+          cat > "$PATCH_DIR/001-four-digit-pin.patch" <<'EOF_PATCH'
+--- a/ucode/lib/runtime.uc
++++ b/ucode/lib/runtime.uc
+@@ -134,10 +134,10 @@ function settings_read() {
 
-          if [ ! -f "$PANEL_PKG/Makefile" ]; then
-            echo "ERROR: BLogic glinet-panel-ui package was not found at $PANEL_PKG"
-            exit 1
-          fi
+ 	let pin = cursor.get('glinet_panel', '@panel[0]', 'pin');
 
-          mkdir -p "$PANEL_PKG/patches"
+-	if (type(pin) == 'string' && match(pin, /^[0-9]{6}$/))
++	if (type(pin) == 'string' && match(pin, /^[0-9]{4}$/))
+ 		settings.pin = pin;
+ 	else if (pin)
+-		warn('panel: pin must be six digits, ignoring it\n');
++		warn('panel: pin must be four digits, ignoring it\n');
 
-          cat << 'EOF_PANEL_PATCH' > "$PANEL_PKG/patches/001-four-digit-pin.patch"
-          --- a/ucode/lib/runtime.uc
-          +++ b/ucode/lib/runtime.uc
-          @@ -140,10 +140,10 @@ function settings_read() {
-           	let pin = cursor.get('glinet_panel', '@panel[0]', 'pin');
+ 	let bright = cursor.get('glinet_panel', '@panel[0]', 'brightness');
 
-          -	if (type(pin) == 'string' && match(pin, /^[0-9]{6}$/))
-          +	if (type(pin) == 'string' && match(pin, /^[0-9]{4}$/))
-           		settings.pin = pin;
-           	else if (pin)
-          -		warn('panel: pin must be six digits, ignoring it\n');
-          +		warn('panel: pin must be four digits, ignoring it\n');
+--- a/ucode/lib/theme.uc
++++ b/ucode/lib/theme.uc
+@@ -127,7 +127,7 @@ export const BAR_FILL_MIN = 46;
+  * happen until it is satisfied, so it is the one page that spends the whole
+  * 240 px on itself.
+  */
+-export const PIN_LEN	= 6;
++export const PIN_LEN	= 4;
+ export const PIN_PAD	= 10;
+ export const PIN_TOP	= 12;
+ export const PIN_BOTTOM	= 8;
+EOF_PATCH
 
-           	let bright = cursor.get('glinet_panel', '@panel[0]', 'brightness');
-
-          --- a/ucode/lib/theme.uc
-          +++ b/ucode/lib/theme.uc
-          @@ -141,7 +141,7 @@ export const BAR_FILL_MIN = 46;
-           * 240 px on itself.
-           */
-          -export const PIN_LEN	= 6;
-          +export const PIN_LEN	= 4;
-           export const PIN_PAD	= 10;
-           export const PIN_TOP	= 12;
-           export const PIN_BOTTOM	= 8;
-          EOF_PANEL_PATCH
-
-          echo "Panel package patch created:"
-          cat "$PANEL_PKG/patches/001-four-digit-pin.patch"
-
-          grep -F 'match(pin, /^[0-9]{4}$/)' \
-            "$PANEL_PKG/patches/001-four-digit-pin.patch"
-
-          grep -F 'export const PIN_LEN' \
-            "$PANEL_PKG/patches/001-four-digit-pin.patch" | \
-            grep -F '+export const PIN_LEN'
-
-          echo
-          echo "========================================"
-          echo "INSTALL /ETC/CUSTOM FAN + USB SCRIPTS"
-          echo "========================================"
-
-          mkdir -p files/etc/custom files/etc/init.d files/etc/rc.d files/usr/bin
-
-          cat << 'EOF_FAN' > files/etc/custom/fan-fixed
-          #!/bin/sh
-
-          for h in /sys/class/hwmon/hwmon*; do
-              [ -r "$h/name" ] || continue
-              [ "$(cat "$h/name" 2>/dev/null)" = "pwmfan" ] || continue
-
-              [ -w "$h/pwm1_enable" ] && echo 1 > "$h/pwm1_enable"
-              echo 64 > "$h/pwm1"
-
-              logger -t fan-fixed "Fan set to PWM 64"
-              exit 0
-          done
-
-          logger -t fan-fixed "pwmfan device not found"
-          exit 1
-          EOF_FAN
-
-          chmod 0755 files/etc/custom/fan-fixed
-
-          cat << 'EOF_FAN_INIT' > files/etc/init.d/flint4-fan-fixed
-          #!/bin/sh /etc/rc.common
-
-          START=99
-
-          start() {
-              /etc/custom/fan-fixed
-          }
-          EOF_FAN_INIT
-
-          chmod 0755 files/etc/init.d/flint4-fan-fixed
-          ln -sf ../init.d/flint4-fan-fixed \
-            files/etc/rc.d/S99flint4-fan-fixed
-
-          cat << 'EOF_USB' > files/etc/custom/usb-power
-          #!/bin/sh
-
-          USB_GPIO="/sys/class/gpio/usb_power/value"
-          TYPEC_GPIO="/sys/class/gpio/typec_power/value"
-          XHCI="/sys/bus/platform/drivers/xhci-mtk"
-
-          CONTROLLERS="11190000.usb 11200000.usb"
-
-          usb_off() {
-              for c in $CONTROLLERS; do
-                  [ -e "$XHCI/$c" ] && echo "$c" > "$XHCI/unbind"
-              done
-
-              echo 0 > "$USB_GPIO"
-              echo 0 > "$TYPEC_GPIO"
-
-              logger -t usb-control "USB power OFF"
-              echo "USB OFF"
-          }
-
-          usb_on() {
-              echo 1 > "$USB_GPIO"
-              echo 1 > "$TYPEC_GPIO"
-
-              sleep 1
-
-              for c in $CONTROLLERS; do
-                  [ ! -e "$XHCI/$c" ] && echo "$c" > "$XHCI/bind"
-              done
-
-              logger -t usb-control "USB power ON"
-              echo "USB ON"
-          }
-
-          state="$(cat "$USB_GPIO" 2>/dev/null)"
-
-          if [ "$state" = "1" ]; then
-              usb_off
-          else
-              usb_on
-          fi
-          EOF_USB
-
-          chmod 0755 files/etc/custom/usb-power
-          ln -sf /etc/custom/usb-power files/usr/bin/usb-power
-
-          echo
-          echo "========================================"
-          echo "SYSUPGRADE KEEP-SETTINGS PRESERVATION"
-          echo "========================================"
-
-          mkdir -p files/etc
-
-          cat << 'EOF_KEEP' >> files/etc/sysupgrade.conf
-          /etc/custom/
-          /etc/init.d/flint4-fan-fixed
-          /etc/config/glinet_panel
-          EOF_KEEP
-
-          echo "Persistent files:"
-          cat files/etc/sysupgrade.conf
+          echo "Refreshed 4-digit PIN patch:"
+          cat "$PATCH_DIR/001-four-digit-pin.patch"
 
       # ============================================================
       # Generate Target Configuration
@@ -522,33 +292,26 @@ jobs:
         run: |
           set -euo pipefail
           cd openwrt
-
           cat << 'EOF_CONFIG' > .config
           CONFIG_TARGET_mediatek=y
           CONFIG_TARGET_mediatek_filogic=y
           CONFIG_TARGET_MULTI_PROFILE=y
           CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_glinet_gl-be14000=y
-
           CONFIG_VERSION_REPO="https://downloads.openwrt.org/snapshots"
-
           # BLogic is build-time only
           # CONFIG_FEED_blogic is not set
-
           # LuCI
           CONFIG_PACKAGE_luci=y
           CONFIG_PACKAGE_luci-ssl=y
-
           # GL.iNet front-panel UI
           CONFIG_PACKAGE_glinet-panel-ui=y
           CONFIG_PACKAGE_ucode-mod-lvgl=y
-
           # SQM / CAKE
           CONFIG_PACKAGE_luci-app-sqm=y
           CONFIG_PACKAGE_sqm-scripts=y
           CONFIG_PACKAGE_kmod-ifb=y
           CONFIG_PACKAGE_kmod-sched-cake=y
           CONFIG_PACKAGE_ip-full=y
-
           # LuCI Statistics / collectd monitoring
           CONFIG_PACKAGE_luci-app-statistics=y
           CONFIG_PACKAGE_collectd=y
@@ -566,9 +329,7 @@ jobs:
           CONFIG_PACKAGE_lm-sensors=y
           CONFIG_PACKAGE_rrdtool1=y
           EOF_CONFIG
-
           make defconfig
-
       # ============================================================
       # Verify Final Configuration
       # ============================================================
@@ -576,59 +337,46 @@ jobs:
         run: |
           set -euo pipefail
           cd openwrt
-
           echo "========================================"
           echo "TARGET"
           echo "========================================"
-
           grep -E \
             'CONFIG_TARGET_mediatek|CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_glinet_gl-be14000' \
             .config
-
           echo
           echo "========================================"
           echo "PANEL UI"
           echo "========================================"
-
           grep -E \
             'CONFIG_PACKAGE_(glinet-panel-ui|ucode-mod-lvgl|lvgl)' \
             .config || true
-
           grep -q \
             '^CONFIG_PACKAGE_glinet-panel-ui=y' \
             .config
-
           echo
           echo "========================================"
           echo "SFP SUPPORT"
           echo "========================================"
-
           grep -E \
             'CONFIG_PACKAGE_kmod-(sfp|i2c-gpio)' \
             .config
-
           grep -q \
             '^CONFIG_PACKAGE_kmod-sfp=y' \
             .config
-
           grep -q \
             '^CONFIG_PACKAGE_kmod-i2c-gpio=y' \
             .config
-
           echo
           echo "========================================"
           echo "SQM / CAKE"
           echo "========================================"
-
           grep -E \
             'CONFIG_PACKAGE_(luci-app-sqm|sqm-scripts|kmod-ifb|kmod-sched-cake|ip-full)' \
             .config
-
           echo
           echo "========================================"
           echo "LUCI STATISTICS / COLLECTD / SENSORS"
           echo "========================================"
-
           MONITORING_PACKAGES="
           luci-app-statistics
           collectd
@@ -646,7 +394,6 @@ jobs:
           lm-sensors
           rrdtool1
           "
-
           for package in $MONITORING_PACKAGES; do
             if ! grep -q "^CONFIG_PACKAGE_${package}=y$" .config; then
               echo "ERROR: Required monitoring package is missing: $package"
@@ -654,21 +401,16 @@ jobs:
             fi
             echo "ENABLED: $package"
           done
-
           echo
           echo "========================================"
           echo "RUNTIME APK REPOSITORY"
           echo "========================================"
-
           grep '^CONFIG_VERSION_REPO=' .config || true
-
           if grep -q '^CONFIG_FEED_blogic=y' .config; then
             echo "ERROR: BLogic feed enabled as runtime APK repository."
             exit 1
           fi
-
           echo "BLogic runtime repository is disabled."
-
       # ============================================================
       # Download Source Packages
       # ============================================================
@@ -676,25 +418,19 @@ jobs:
         run: |
           set -euo pipefail
           cd openwrt
-
           make download -j$(nproc)
-
           find dl \
             -type f \
             -size -1024c \
             -delete
-
       # ============================================================
       # Compile Firmware
       # ============================================================
       - name: Compile Firmware
         run: |
           cd openwrt
-
           echo "Building on $(nproc) cores..."
-
           make -j$(nproc) || make -j1 V=s
-
       # ============================================================
       # Verify Runtime APK Repositories
       # ============================================================
@@ -702,34 +438,28 @@ jobs:
         run: |
           set -euo pipefail
           cd openwrt
-
           mapfile -t REPO_FILES < <(
             find build_dir staging_dir \
               -type f \
               -path '*/etc/apk/repositories.d/distfeeds.list' \
               -print
           )
-
           if [ "${#REPO_FILES[@]}" -eq 0 ]; then
             echo "ERROR: Generated APK distfeeds.list was not found."
             exit 1
           fi
-
           for repo_file in "${REPO_FILES[@]}"; do
             echo
             echo "===== $repo_file ====="
             cat "$repo_file"
-
             grep -Fq \
               'https://downloads.openwrt.org/snapshots/' \
               "$repo_file"
-
             if grep -Fiq '/blogic/' "$repo_file"; then
               echo "ERROR: BLogic was emitted as a runtime APK repository."
               exit 1
             fi
           done
-
       # ============================================================
       # Prepare Firmware Artifacts
       # ============================================================
@@ -737,9 +467,7 @@ jobs:
         run: |
           set -euo pipefail
           cd openwrt
-
           mkdir -p ../firmware-out
-
           find bin/targets/mediatek/filogic/ \
             -type f \
             \( \
@@ -749,14 +477,11 @@ jobs:
               -o -name "*.manifest" \
             \) \
             -exec cp {} ../firmware-out/ \;
-
           echo
           echo "========================================"
           echo "BUILD ARTIFACTS"
           echo "========================================"
-
           ls -lah ../firmware-out
-
       # ============================================================
       # Save Build Information
       # ============================================================
@@ -764,9 +489,8 @@ jobs:
         run: |
           set -euo pipefail
           cd openwrt
-
           {
-            echo "Flint 4 v1.4.4"
+            echo "Flint 4 v1.3.2"
             echo
             echo "OpenWrt source:"
             echo "https://github.com/JiaY-shi/openwrt"
@@ -780,15 +504,13 @@ jobs:
             echo "Commit description:"
             git log -1 --oneline
           } > ../firmware-out/build-info.txt
-
           cat ../firmware-out/build-info.txt
-
       # ============================================================
       # Upload Firmware
       # ============================================================
       - name: Upload Firmware Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Flint4-v1.4.4-OpenWrt
+          name: Flint4-v1.3.2-OpenWrt
           path: firmware-out
           if-no-files-found: error
