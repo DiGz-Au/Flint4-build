@@ -1,11 +1,11 @@
-name: Flint 4 v1.4.0
+name: Flint 4 v1.4.1
 
 on:
   workflow_dispatch:
 
 jobs:
   build:
-    name: Build GL-BE14000 OpenWrt v1.4.0
+    name: Build GL-BE14000 OpenWrt v1.4.1
     runs-on: ubuntu-22.04
 
     steps:
@@ -97,6 +97,43 @@ jobs:
           git rev-parse HEAD
 
       # ============================================================
+      # Apply GMAC1 Factory MAC Fix
+      # ============================================================
+      - name: Apply GMAC1 Factory MAC Fix
+        run: |
+          set -euo pipefail
+          cd openwrt
+
+          DTS="target/linux/mediatek/dts/mt7988a-glinet-gl-be14000.dts"
+
+          GMAC1_FIX="40d1731c36f017522da33e37e09457d3b2978b9d"
+          GMAC1_REPO="https://github.com/akorshun/openwrt.git"
+
+          if sed -n '/^&gmac1 {/,/^};/p' "$DTS" | \
+             grep -Fq 'nvmem-cells = <&macaddr_ethernet 2>;' && \
+             sed -n '/^&gmac1 {/,/^};/p' "$DTS" | \
+             grep -Fq 'nvmem-cell-names = "mac-address";'; then
+            echo "GMAC1 already uses factory MAC offset +2; skipping commit."
+          else
+            if sed -n '/^&gmac1 {/,/^};/p' "$DTS" | \
+               grep -Eq 'nvmem-cells|nvmem-cell-names'; then
+              echo "ERROR: GMAC1 has an unexpected partial or different NVMEM assignment."
+              exit 1
+            fi
+
+            git fetch --no-tags "$GMAC1_REPO" "$GMAC1_FIX"
+            git show -s --format='%H %s' "$GMAC1_FIX"
+
+            git -c user.name="Flint 4 Build Bot" \
+                -c user.email="actions@github.com" \
+                cherry-pick "$GMAC1_FIX"
+          fi
+
+          echo
+          echo "Final GMAC1 block:"
+          sed -n '/^&gmac1 {/,/^};/p' "$DTS"
+
+      # ============================================================
       # Verify Current Flint 4 Support
       # ============================================================
       - name: Verify Flint 4 Baseline
@@ -136,7 +173,7 @@ jobs:
 
           echo
           echo "========================================"
-          echo "GMAC1 INTERNAL 10G SWITCH LINK"
+          echo "GMAC1 INTERNAL 10G SWITCH LINK + LAN MAC"
           echo "========================================"
 
           GMAC1_BLOCK="$(
@@ -153,13 +190,15 @@ jobs:
             grep -F \
               'speed = <10000>;'
 
-          if printf '%s\n' "$GMAC1_BLOCK" | \
-             grep -Eq 'nvmem-cells|nvmem-cell-names'; then
-            echo "ERROR: GMAC1 unexpectedly contains an NVMEM MAC assignment."
-            exit 1
-          fi
+          printf '%s\n' "$GMAC1_BLOCK" | \
+            grep -F \
+              'nvmem-cells = <&macaddr_ethernet 2>;'
 
-          echo "GMAC1 correctly has no factory MAC assignment."
+          printf '%s\n' "$GMAC1_BLOCK" | \
+            grep -F \
+              'nvmem-cell-names = "mac-address";'
+
+          echo "GMAC1 correctly uses factory LAN MAC +2."
 
           echo
           echo "========================================"
@@ -565,7 +604,7 @@ jobs:
           cd openwrt
 
           {
-            echo "Flint 4 v1.4.0"
+            echo "Flint 4 v1.4.1"
             echo
             echo "OpenWrt source:"
             echo "https://github.com/JiaY-shi/openwrt"
@@ -588,6 +627,6 @@ jobs:
       - name: Upload Firmware Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Flint4-v1.4.0-OpenWrt
+          name: Flint4-v1.4.1-OpenWrt
           path: firmware-out
           if-no-files-found: error
