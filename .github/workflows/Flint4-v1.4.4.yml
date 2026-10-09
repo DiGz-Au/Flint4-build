@@ -1,11 +1,11 @@
-name: Flint 4 v1.3.2
+name: Flint 4 v1.4.4
 
 on:
   workflow_dispatch:
 
 jobs:
   build:
-    name: Build GL-BE14000 OpenWrt v1.3.2
+    name: Build GL-BE14000 OpenWrt v1.4.4
     runs-on: ubuntu-22.04
 
     steps:
@@ -241,7 +241,19 @@ jobs:
             "src-git blogic https://github.com/blogic/feed-blogic.git" \
             >> feeds.conf.default
           ./scripts/feeds update -a
-          ./scripts/feeds install -a
+          # Install only requested packages and their dependencies.
+          # Installing every feed introduced unrelated video/Qt dependency cycles.
+          ./scripts/feeds install \
+            luci luci-ssl luci-app-sqm sqm-scripts \
+            luci-app-statistics collectd \
+            collectd-mod-cpu collectd-mod-cpufreq collectd-mod-interface \
+            collectd-mod-iwinfo collectd-mod-load collectd-mod-memory \
+            collectd-mod-network collectd-mod-rrdtool collectd-mod-sensors \
+            collectd-mod-thermal collectd-mod-uptime lm-sensors rrdtool1
+          ./scripts/feeds install -p blogic glinet-panel-ui ucode-mod-lvgl lvgl
+          test -f package/feeds/blogic/glinet-panel-ui/Makefile
+          test -f package/feeds/blogic/ucode-mod-lvgl/Makefile
+          test -f package/feeds/blogic/lvgl/Makefile
       # ============================================================
       # Refresh 4-Digit Panel PIN Patch
       # ============================================================
@@ -254,34 +266,34 @@ jobs:
           mkdir -p "$PATCH_DIR"
 
           cat > "$PATCH_DIR/001-four-digit-pin.patch" <<'EOF_PATCH'
---- a/ucode/lib/runtime.uc
-+++ b/ucode/lib/runtime.uc
-@@ -134,10 +134,10 @@ function settings_read() {
-
- 	let pin = cursor.get('glinet_panel', '@panel[0]', 'pin');
-
--	if (type(pin) == 'string' && match(pin, /^[0-9]{6}$/))
-+	if (type(pin) == 'string' && match(pin, /^[0-9]{4}$/))
- 		settings.pin = pin;
- 	else if (pin)
--		warn('panel: pin must be six digits, ignoring it\n');
-+		warn('panel: pin must be four digits, ignoring it\n');
-
- 	let bright = cursor.get('glinet_panel', '@panel[0]', 'brightness');
-
---- a/ucode/lib/theme.uc
-+++ b/ucode/lib/theme.uc
-@@ -127,7 +127,7 @@ export const BAR_FILL_MIN = 46;
-  * happen until it is satisfied, so it is the one page that spends the whole
-  * 240 px on itself.
-  */
--export const PIN_LEN	= 6;
-+export const PIN_LEN	= 4;
- export const PIN_PAD	= 10;
- export const PIN_TOP	= 12;
- export const PIN_BOTTOM	= 8;
-EOF_PATCH
-
+          --- a/ucode/lib/runtime.uc
+          +++ b/ucode/lib/runtime.uc
+          @@ -134,10 +134,10 @@ function settings_read() {
+          
+           	let pin = cursor.get('glinet_panel', '@panel[0]', 'pin');
+          
+          -	if (type(pin) == 'string' && match(pin, /^[0-9]{6}$/))
+          +	if (type(pin) == 'string' && match(pin, /^[0-9]{4}$/))
+           		settings.pin = pin;
+           	else if (pin)
+          -		warn('panel: pin must be six digits, ignoring it\n');
+          +		warn('panel: pin must be four digits, ignoring it\n');
+          
+           	let bright = cursor.get('glinet_panel', '@panel[0]', 'brightness');
+          
+          --- a/ucode/lib/theme.uc
+          +++ b/ucode/lib/theme.uc
+          @@ -127,7 +127,7 @@ export const BAR_FILL_MIN = 46;
+            * happen until it is satisfied, so it is the one page that spends the whole
+            * 240 px on itself.
+            */
+          -export const PIN_LEN	= 6;
+          +export const PIN_LEN	= 4;
+           export const PIN_PAD	= 10;
+           export const PIN_TOP	= 12;
+           export const PIN_BOTTOM	= 8;
+          EOF_PATCH
+          
           echo "Refreshed 4-digit PIN patch:"
           cat "$PATCH_DIR/001-four-digit-pin.patch"
 
@@ -296,7 +308,10 @@ EOF_PATCH
           CONFIG_TARGET_mediatek=y
           CONFIG_TARGET_mediatek_filogic=y
           CONFIG_TARGET_MULTI_PROFILE=y
+          CONFIG_TARGET_ALL_PROFILES=n
           CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_glinet_gl-be14000=y
+          CONFIG_PACKAGE_kmod-sfp=y
+          CONFIG_PACKAGE_kmod-i2c-gpio=y
           CONFIG_VERSION_REPO="https://downloads.openwrt.org/snapshots"
           # BLogic is build-time only
           # CONFIG_FEED_blogic is not set
@@ -329,7 +344,13 @@ EOF_PATCH
           CONFIG_PACKAGE_lm-sensors=y
           CONFIG_PACKAGE_rrdtool1=y
           EOF_CONFIG
-          make defconfig
+          # Kconfig can print recursive dependency errors without a failing exit
+          # status unless fatal recursive checks are explicitly enabled.
+          make defconfig RECURSIVE_DEP_IS_ERROR=1 2>&1 | tee ../defconfig.log
+          if grep -Eq 'recursive dependency detected|:[[:space:]]*error:' ../defconfig.log; then
+            echo "ERROR: Kconfig failed; inspect defconfig.log."
+            exit 1
+          fi
       # ============================================================
       # Verify Final Configuration
       # ============================================================
@@ -341,7 +362,7 @@ EOF_PATCH
           echo "TARGET"
           echo "========================================"
           grep -E \
-            'CONFIG_TARGET_mediatek|CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_glinet_gl-be14000' \
+            '^CONFIG_TARGET_(mediatek|mediatek_filogic|DEVICE_mediatek_filogic_DEVICE_glinet_gl-be14000)=y$' \
             .config
           echo
           echo "========================================"
@@ -350,9 +371,12 @@ EOF_PATCH
           grep -E \
             'CONFIG_PACKAGE_(glinet-panel-ui|ucode-mod-lvgl|lvgl)' \
             .config || true
-          grep -q \
-            '^CONFIG_PACKAGE_glinet-panel-ui=y' \
-            .config
+          for package in glinet-panel-ui ucode-mod-lvgl; do
+            if ! grep -Fxq "CONFIG_PACKAGE_${package}=y" .config; then
+              echo "ERROR: Required panel package missing after defconfig: $package"
+              exit 1
+            fi
+          done
           echo
           echo "========================================"
           echo "SFP SUPPORT"
@@ -490,7 +514,7 @@ EOF_PATCH
           set -euo pipefail
           cd openwrt
           {
-            echo "Flint 4 v1.3.2"
+            echo "Flint 4 v1.4.4"
             echo
             echo "OpenWrt source:"
             echo "https://github.com/JiaY-shi/openwrt"
@@ -511,6 +535,7 @@ EOF_PATCH
       - name: Upload Firmware Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Flint4-v1.3.2-OpenWrt
+          name: Flint4-v1.4.4-OpenWrt
           path: firmware-out
           if-no-files-found: error
+
