@@ -1,4 +1,4 @@
-name: Flint 4 v1.4.4
+name: Flint 4 v1.4.4 pin
 
 on:
   workflow_dispatch:
