@@ -1,4 +1,4 @@
-name: Flint 4 v1.4.4 pin
+name: Flint 4 v1.4.4
 
 on:
   workflow_dispatch:
@@ -241,6 +241,16 @@ jobs:
             "src-git blogic https://github.com/blogic/feed-blogic.git" \
             >> feeds.conf.default
           ./scripts/feeds update -a
+          # Current libdrm requires video-support, absent in this Flint 4 tree.
+          # Use the preceding libdrm revision (same 2.4.133 library version).
+          LIBDRM_COMPAT_REV="727190b849669139d55fc583346b2245d25d115d"
+          git -C feeds/packages fetch --depth 1 origin "$LIBDRM_COMPAT_REV"
+          git -C feeds/packages checkout "$LIBDRM_COMPAT_REV" -- libs/libdrm
+          ./scripts/feeds update -i packages
+          if grep -Eq '^[[:space:]]*DEPENDS:=.*video-support' feeds/packages/libs/libdrm/Makefile; then
+            echo "ERROR: libdrm still requires unsupported video-support."
+            exit 1
+          fi
           # Install only requested packages and their dependencies.
           # Installing every feed introduced unrelated video/Qt dependency cycles.
           ./scripts/feeds install \
@@ -371,7 +381,7 @@ jobs:
           grep -E \
             'CONFIG_PACKAGE_(glinet-panel-ui|ucode-mod-lvgl|lvgl)' \
             .config || true
-          for package in glinet-panel-ui ucode-mod-lvgl; do
+          for package in libdrm ucode-mod-lvgl glinet-panel-ui; do
             if ! grep -Fxq "CONFIG_PACKAGE_${package}=y" .config; then
               echo "ERROR: Required panel package missing after defconfig: $package"
               exit 1
@@ -524,6 +534,9 @@ jobs:
             echo
             echo "Commit:"
             git rev-parse HEAD
+            echo
+            echo "libdrm compatibility revision:"
+            echo "727190b849669139d55fc583346b2245d25d115d"
             echo
             echo "Commit description:"
             git log -1 --oneline
