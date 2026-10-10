@@ -538,4 +538,3 @@ jobs:
           name: Flint4-v1.4.4-OpenWrt
           path: firmware-out
           if-no-files-found: error
-
