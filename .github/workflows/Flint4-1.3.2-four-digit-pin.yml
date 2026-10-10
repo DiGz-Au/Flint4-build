@@ -241,7 +241,19 @@ jobs:
             "src-git blogic https://github.com/blogic/feed-blogic.git" \
             >> feeds.conf.default
           ./scripts/feeds update -a
-          ./scripts/feeds install -a
+          # Install only requested packages and their dependencies.
+          # Installing every feed introduced unrelated video/Qt dependency cycles.
+          ./scripts/feeds install \
+            luci luci-ssl luci-app-sqm sqm-scripts \
+            luci-app-statistics collectd \
+            collectd-mod-cpu collectd-mod-cpufreq collectd-mod-interface \
+            collectd-mod-iwinfo collectd-mod-load collectd-mod-memory \
+            collectd-mod-network collectd-mod-rrdtool collectd-mod-sensors \
+            collectd-mod-thermal collectd-mod-uptime lm-sensors rrdtool1
+          ./scripts/feeds install -p blogic glinet-panel-ui ucode-mod-lvgl lvgl
+          test -f package/feeds/blogic/glinet-panel-ui/Makefile
+          test -f package/feeds/blogic/ucode-mod-lvgl/Makefile
+          test -f package/feeds/blogic/lvgl/Makefile
       # ============================================================
       # Refresh 4-Digit Panel PIN Patch
       # ============================================================
@@ -296,7 +308,10 @@ jobs:
           CONFIG_TARGET_mediatek=y
           CONFIG_TARGET_mediatek_filogic=y
           CONFIG_TARGET_MULTI_PROFILE=y
+          CONFIG_TARGET_ALL_PROFILES=n
           CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_glinet_gl-be14000=y
+          CONFIG_PACKAGE_kmod-sfp=y
+          CONFIG_PACKAGE_kmod-i2c-gpio=y
           CONFIG_VERSION_REPO="https://downloads.openwrt.org/snapshots"
           # BLogic is build-time only
           # CONFIG_FEED_blogic is not set
@@ -329,7 +344,13 @@ jobs:
           CONFIG_PACKAGE_lm-sensors=y
           CONFIG_PACKAGE_rrdtool1=y
           EOF_CONFIG
-          make defconfig
+          # Kconfig can print recursive dependency errors without a failing exit
+          # status unless fatal recursive checks are explicitly enabled.
+          make defconfig RECURSIVE_DEP_IS_ERROR=1 2>&1 | tee ../defconfig.log
+          if grep -Eq 'recursive dependency detected|:[[:space:]]*error:' ../defconfig.log; then
+            echo "ERROR: Kconfig failed; inspect defconfig.log."
+            exit 1
+          fi
       # ============================================================
       # Verify Final Configuration
       # ============================================================
@@ -341,7 +362,7 @@ jobs:
           echo "TARGET"
           echo "========================================"
           grep -E \
-            'CONFIG_TARGET_mediatek|CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_glinet_gl-be14000' \
+            '^CONFIG_TARGET_(mediatek|mediatek_filogic|DEVICE_mediatek_filogic_DEVICE_glinet_gl-be14000)=y$' \
             .config
           echo
           echo "========================================"
@@ -350,9 +371,12 @@ jobs:
           grep -E \
             'CONFIG_PACKAGE_(glinet-panel-ui|ucode-mod-lvgl|lvgl)' \
             .config || true
-          grep -q \
-            '^CONFIG_PACKAGE_glinet-panel-ui=y' \
-            .config
+          for package in glinet-panel-ui ucode-mod-lvgl; do
+            if ! grep -Fxq "CONFIG_PACKAGE_${package}=y" .config; then
+              echo "ERROR: Required panel package missing after defconfig: $package"
+              exit 1
+            fi
+          done
           echo
           echo "========================================"
           echo "SFP SUPPORT"
@@ -514,3 +538,4 @@ jobs:
           name: Flint4-v1.4.4-OpenWrt
           path: firmware-out
           if-no-files-found: error
+
