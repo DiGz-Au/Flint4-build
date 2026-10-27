@@ -1,0 +1,183 @@
+name: Flint 4 - Blogic PR Build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build GL-BE14000 from Blogic PR
+    runs-on: ubuntu-22.04
+    timeout-minutes: 360
+
+    steps:
+      - name: Maximize build space
+        uses: easimon/maximize-build-space@v10
+        with:
+          root-reserve-mb: 1024
+          swap-size-mb: 1024
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          remove-codeql: 'true'
+          remove-docker-images: 'true'
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential clang flex bison gawk \
+            gcc-multilib g++-multilib gettext git \
+            libncurses5-dev libssl-dev python3-distutils \
+            rsync unzip zlib1g-dev file wget \
+            device-tree-compiler python3 python3-setuptools \
+            python3-yaml
+          sudo apt-get clean
+          sudo rm -rf /var/lib/apt/lists/*
+
+      - name: Checkout Blogic Flint 4 PR
+        run: |
+          set -euo pipefail
+
+          git clone \
+            --branch glinet \
+            --single-branch \
+            https://github.com/blogic/openwrt.git \
+            openwrt
+
+          cd openwrt
+
+          # Pin to the PR revision checked on 27 October 2026.
+          git checkout dab52bbf17e4bc9c46f0352348b444ccacbd6fd5
+
+          echo "===== SOURCE REVISION ====="
+          git log -1 --oneline
+          git rev-parse HEAD
+
+          echo "===== VERIFY FLINT 4 DEVICE ====="
+          grep -Ril 'gl-be14000' target/linux/mediatek
+
+      - name: Install feeds and panel UI
+        run: |
+          set -euo pipefail
+          cd openwrt
+
+          echo "src-git blogic https://github.com/blogic/feed-blogic.git" \
+            >> feeds.conf.default
+
+          ./scripts/feeds update -a
+
+          ./scripts/feeds install \
+            luci luci-ssl \
+            luci-app-sqm sqm-scripts \
+            luci-app-statistics collectd \
+            collectd-mod-cpu collectd-mod-cpufreq \
+            collectd-mod-interface collectd-mod-iwinfo \
+            collectd-mod-load collectd-mod-memory \
+            collectd-mod-network collectd-mod-rrdtool \
+            collectd-mod-sensors collectd-mod-thermal \
+            collectd-mod-uptime lm-sensors rrdtool1
+
+          ./scripts/feeds install -p blogic \
+            glinet-panel-ui ucode-mod-lvgl lvgl
+
+      - name: Configure Flint 4 firmware
+        run: |
+          set -euo pipefail
+          cd openwrt
+
+          cat > .config <<'EOF'
+          CONFIG_TARGET_mediatek=y
+          CONFIG_TARGET_mediatek_filogic=y
+          CONFIG_TARGET_MULTI_PROFILE=y
+          CONFIG_TARGET_ALL_PROFILES=n
+          CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_glinet_gl-be14000=y
+
+          CONFIG_PACKAGE_luci=y
+          CONFIG_PACKAGE_luci-ssl=y
+
+          CONFIG_PACKAGE_glinet-panel-ui=y
+          CONFIG_PACKAGE_ucode-mod-lvgl=y
+          CONFIG_PACKAGE_lvgl=y
+
+          CONFIG_PACKAGE_kmod-sfp=y
+          CONFIG_PACKAGE_kmod-i2c-gpio=y
+
+          CONFIG_PACKAGE_luci-app-sqm=y
+          CONFIG_PACKAGE_sqm-scripts=y
+          CONFIG_PACKAGE_kmod-ifb=y
+          CONFIG_PACKAGE_kmod-sched-cake=y
+          CONFIG_PACKAGE_ip-full=y
+
+          CONFIG_PACKAGE_luci-app-statistics=y
+          CONFIG_PACKAGE_collectd=y
+          CONFIG_PACKAGE_collectd-mod-cpu=y
+          CONFIG_PACKAGE_collectd-mod-cpufreq=y
+          CONFIG_PACKAGE_collectd-mod-interface=y
+          CONFIG_PACKAGE_collectd-mod-iwinfo=y
+          CONFIG_PACKAGE_collectd-mod-load=y
+          CONFIG_PACKAGE_collectd-mod-memory=y
+          CONFIG_PACKAGE_collectd-mod-network=y
+          CONFIG_PACKAGE_collectd-mod-rrdtool=y
+          CONFIG_PACKAGE_collectd-mod-sensors=y
+          CONFIG_PACKAGE_collectd-mod-thermal=y
+          CONFIG_PACKAGE_collectd-mod-uptime=y
+          CONFIG_PACKAGE_lm-sensors=y
+          CONFIG_PACKAGE_rrdtool1=y
+          EOF
+
+          make defconfig
+
+          grep -E \
+            '^CONFIG_TARGET_(mediatek|mediatek_filogic|DEVICE_mediatek_filogic_DEVICE_glinet_gl-be14000)=y$' \
+            .config
+
+          grep -E \
+            '^CONFIG_PACKAGE_(luci|glinet-panel-ui|ucode-mod-lvgl|lvgl)=y$' \
+            .config
+
+      - name: Download sources
+        run: |
+          set -euo pipefail
+          cd openwrt
+          make download -j"$(nproc)"
+          find dl -type f -size -1024c -delete
+
+      - name: Compile firmware
+        run: |
+          set -euo pipefail
+          cd openwrt
+          make -j"$(nproc)" || make -j1 V=s
+
+      - name: Collect firmware artifacts
+        run: |
+          set -euo pipefail
+
+          mkdir -p firmware-out
+
+          find openwrt/bin/targets/mediatek/filogic \
+            -type f \
+            \( -name '*.bin' -o -name '*.img' \
+               -o -name '*.itb' -o -name '*.manifest' \
+               -o -name '*.buildinfo' \) \
+            -exec cp {} firmware-out/ \;
+
+          {
+            echo "Source: https://github.com/blogic/openwrt"
+            echo "Branch: glinet"
+            echo "PR: https://github.com/openwrt/openwrt/pull/26215"
+            echo "Commit: $(git -C openwrt rev-parse HEAD)"
+            git -C openwrt log -1 --oneline
+          } > firmware-out/build-info.txt
+
+          ls -lh firmware-out
+
+      - name: Upload firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: Flint4-Blogic-PR
+          path: firmware-out/
+          if-no-files-found: error
+          retention-days: 14
