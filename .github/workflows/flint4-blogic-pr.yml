@@ -1,4 +1,5 @@
-name: Flint 4 - Blogic PR Build
+
+name: Flint 4 - Blogic PR Build (GMAC1 MAC Fix)
 
 on:
   workflow_dispatch:
@@ -8,7 +9,7 @@ permissions:
 
 jobs:
   build:
-    name: Build GL-BE14000 from Blogic PR
+    name: Build GL-BE14000 from Blogic PR with GMAC1 MAC Fix
     runs-on: ubuntu-22.04
     timeout-minutes: 360
 
@@ -49,7 +50,7 @@ jobs:
 
           cd openwrt
 
-          # Pin to the PR revision checked on 27 October 2026.
+          # Pin the Blogic source revision.
           git checkout dab52bbf17e4bc9c46f0352348b444ccacbd6fd5
 
           echo "===== SOURCE REVISION ====="
@@ -58,6 +59,77 @@ jobs:
 
           echo "===== VERIFY FLINT 4 DEVICE ====="
           grep -Ril 'gl-be14000' target/linux/mediatek
+
+      - name: Apply and verify Flint 4 GMAC1 factory MAC fix
+        run: |
+          set -euo pipefail
+          cd openwrt
+
+          DTS="target/linux/mediatek/dts/mt7988a-glinet-gl-be14000.dts"
+          test -f "$DTS"
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path(
+              "target/linux/mediatek/dts/mt7988a-glinet-gl-be14000.dts"
+          )
+          text = path.read_text()
+
+          pattern = re.compile(r'(&gmac1\s*\{)(.*?)(^\};)', re.M | re.S)
+          match = pattern.search(text)
+
+          if not match:
+              raise SystemExit(
+                  "ERROR: Could not find the &gmac1 device-tree block."
+              )
+
+          block = match.group(0)
+          cells = 'nvmem-cells = <&macaddr_ethernet 2>;'
+          names = 'nvmem-cell-names = "mac-address";'
+
+          if cells in block and names in block:
+              print("GMAC1 factory MAC fix already exists.")
+          else:
+              if 'nvmem-cells' in block or 'nvmem-cell-names' in block:
+                  raise SystemExit(
+                      "ERROR: GMAC1 already has different NVMEM settings; "
+                      "refusing to overwrite them."
+                  )
+
+              replacement = (
+                  match.group(1)
+                  + '\n\t' + cells
+                  + '\n\t' + names
+                  + match.group(2)
+                  + match.group(3)
+              )
+
+              text = text[:match.start()] + replacement + text[match.end():]
+              path.write_text(text)
+              print("Applied GMAC1 factory MAC fix.")
+
+          # Re-read and validate the resulting source.
+          updated = path.read_text()
+          verify = pattern.search(updated)
+
+          if not verify:
+              raise SystemExit("ERROR: GMAC1 block missing after patch.")
+
+          block = verify.group(0)
+
+          if cells not in block or names not in block:
+              raise SystemExit(
+                  "ERROR: GMAC1 factory MAC fix verification failed."
+              )
+
+          print("===== VERIFIED GMAC1 DEVICE-TREE BLOCK =====")
+          print(block)
+          PY
+
+          echo "===== PATCH DIFF ====="
+          git diff -- "$DTS"
 
       - name: Install feeds and panel UI
         run: |
@@ -130,10 +202,12 @@ jobs:
 
           make defconfig
 
+          echo "===== VERIFY TARGET CONFIGURATION ====="
           grep -E \
             '^CONFIG_TARGET_(mediatek|mediatek_filogic|DEVICE_mediatek_filogic_DEVICE_glinet_gl-be14000)=y$' \
             .config
 
+          echo "===== VERIFY PANEL AND LUCI PACKAGES ====="
           grep -E \
             '^CONFIG_PACKAGE_(luci|glinet-panel-ui|ucode-mod-lvgl|lvgl)=y$' \
             .config
@@ -142,6 +216,7 @@ jobs:
         run: |
           set -euo pipefail
           cd openwrt
+
           make download -j"$(nproc)"
           find dl -type f -size -1024c -delete
 
@@ -149,7 +224,28 @@ jobs:
         run: |
           set -euo pipefail
           cd openwrt
+
           make -j"$(nproc)" || make -j1 V=s
+
+      - name: Verify generated Flint 4 firmware
+        run: |
+          set -euo pipefail
+          cd openwrt
+
+          OUTPUT="bin/targets/mediatek/filogic"
+
+          test -d "$OUTPUT"
+
+          echo "===== GENERATED DEVICE IMAGES ====="
+          find "$OUTPUT" -maxdepth 1 -type f \
+            \( -name '*gl-be14000*' -o -name '*manifest' \) \
+            -print
+
+          if ! find "$OUTPUT" -maxdepth 1 -type f \
+            -name '*gl-be14000*' | grep -q .; then
+            echo "ERROR: No GL-BE14000 firmware image found."
+            exit 1
+          fi
 
       - name: Collect firmware artifacts
         run: |
@@ -158,26 +254,38 @@ jobs:
           mkdir -p firmware-out
 
           find openwrt/bin/targets/mediatek/filogic \
-            -type f \
+            -maxdepth 1 -type f \
             \( -name '*.bin' -o -name '*.img' \
                -o -name '*.itb' -o -name '*.manifest' \
                -o -name '*.buildinfo' \) \
             -exec cp {} firmware-out/ \;
 
           {
+            echo "Device: GL.iNet GL-BE14000 / Flint 4"
             echo "Source: https://github.com/blogic/openwrt"
             echo "Branch: glinet"
             echo "PR: https://github.com/openwrt/openwrt/pull/26215"
-            echo "Commit: $(git -C openwrt rev-parse HEAD)"
+            echo "Base commit: $(git -C openwrt rev-parse HEAD)"
+            echo
+            echo "GMAC1 fix:"
+            echo "nvmem-cells = <&macaddr_ethernet 2>;"
+            echo 'nvmem-cell-names = "mac-address";'
+            echo
+            echo "Build revision:"
             git -C openwrt log -1 --oneline
+            echo
+            echo "Local changes:"
+            git -C openwrt diff -- \
+              target/linux/mediatek/dts/mt7988a-glinet-gl-be14000.dts
           } > firmware-out/build-info.txt
 
+          echo "===== FINAL ARTIFACTS ====="
           ls -lh firmware-out
 
       - name: Upload firmware
         uses: actions/upload-artifact@v4
         with:
-          name: Flint4-Blogic-PR
+          name: Flint4-Blogic-PR-GMAC1-MAC-Fix
           path: firmware-out/
           if-no-files-found: error
           retention-days: 14
